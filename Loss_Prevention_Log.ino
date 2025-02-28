@@ -1,11 +1,12 @@
+// DOWNGRADE TO LVGL 8.4 BEFORE RUNNIGN
 #include <Wire.h>
-
 #include <M5CoreS3.h>
 #include "lv_conf.h"
 #include <lvgl.h>
 #include <ArduinoIoTCloud.h>
 #include <Arduino_ConnectionHandler.h>
 #include <WiFi.h>
+#include <Preferences.h>
 
 // Debug flag - set to true to enable debug output
 #define DEBUG_ENABLED true
@@ -56,23 +57,24 @@ static int numNetworks = 0;
 // Menu options
 const char* genders[] = {"Male", "Female"};
 
-// Expanded color options for different clothing types
+// Global next button pointers
+lv_obj_t* shirt_next_btn = nullptr;
+lv_obj_t* pants_next_btn = nullptr;
+lv_obj_t* shoes_next_btn = nullptr;
+
 const char* shirtColors[] = {
-    "White", "Black", "Blue", "Red", "Green", "Yellow", 
-    "Pink", "Purple", "Orange", "Grey", "Brown", "Navy",
-    "Maroon", "Teal", "Beige", "Burgundy", "Olive", "Lavender"
+    "Red", "Orange", "Yellow", "Green", "Blue", "Purple", 
+    "Black", "White"
 };
 
 const char* pantsColors[] = {
     "Black", "Blue", "Grey", "Khaki", "Brown", "Navy",
-    "White", "Beige", "Olive", "Burgundy", "Tan", "Charcoal",
-    "Dark Blue", "Light Grey", "Stone", "Cream"
+    "White", "Beige"
 };
 
 const char* shoeColors[] = {
-    "Black", "Brown", "White", "Grey", "Navy", "Tan",
-    "Red", "Blue", "Multi-Color", "Gold", "Silver", "Bronze",
-    "Beige", "Burgundy", "Pink", "Green"
+    "Black", "Brown", "White", "Grey", "Navy", "Red",
+    "Blue", "Green"
 };
 
 const char* items[] = {"Jewelry", "Women's Shoes", "Men's Shoes", "Cosmetics", "Fragrances", "Home", "Kids"};
@@ -82,14 +84,97 @@ lv_obj_t *mainScreen = nullptr, *genderMenu = nullptr, *colorMenu = nullptr, *it
 lv_obj_t *wifiIndicator = nullptr;
 lv_obj_t *wifiSettingsScreen = nullptr;
 
+// WiFi UI components
+static lv_obj_t* wifi_screen = nullptr;
+static lv_obj_t* wifi_list = nullptr;
+static lv_obj_t* wifi_keyboard = nullptr;
+static lv_obj_t* wifi_status_label = nullptr;
+static char selected_ssid[33] = ""; // Max SSID length is 32 characters + null terminator
+static char wifi_password[65] = ""; // Max WPA2 password length is 64 characters + null terminator
+static Preferences preferences;
+
 // Styles
 static lv_style_t style_screen, style_btn, style_btn_pressed, style_title, style_text;
 
+// Add these global variables and keyboard definitions
+static int keyboard_page_index = 0;
+
+// Control map for button matrix
+const lv_btnmatrix_ctrl_t keyboard_ctrl_map[] = {
+    4, 4, 4,
+    4, 4, 4,
+    4, 4, 4,
+    3, 3, 3, 3
+};
+
+// Keyboard maps for different pages
+const char *keyboard_maps[][23] = {
+    { // Page 0: Lowercase letters (first set)
+      "a", "b", "c", "\n",
+      "d", "e", "f", "\n",
+      "g", "h", "i", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, ""
+    },
+    { // Page 1: Lowercase letters (second set)
+      "j", "k", "l", "\n",
+      "m", "n", "o", "\n",
+      "p", "q", "r", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, ""
+    },
+    { // Page 2: Lowercase letters (third set)
+      "s", "t", "u", "\n",
+      "v", "w", "x", "\n",
+      "y", "z", " ", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, ""
+    },
+    { // Page 3: Uppercase letters (first set)
+      "A", "B", "C", "\n",
+      "D", "E", "F", "\n",
+      "G", "H", "I", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, ""
+    },
+    { // Page 4: Uppercase letters (second set)
+      "J", "K", "L", "\n",
+      "M", "N", "O", "\n",
+      "P", "Q", "R", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, ""
+    },
+    { // Page 5: Uppercase letters (third set)
+      "S", "T", "U", "\n",
+      "V", "W", "X", "\n",
+      "Y", "Z", " ", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, ""
+    },
+    { // Page 6: Numbers
+      "1", "2", "3", "\n",
+      "4", "5", "6", "\n",
+      "7", "8", "9", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, ""
+    },
+    { // Page 7: Special characters (first set)
+      "0", "+", "-", "\n",
+      "/", "*", "=", "\n",
+      "!", "?", "@", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, ""
+    },
+    { // Page 8: Special characters (second set)
+      "#", "$", "%", "\n",
+      "&", "(", ")", "\n",
+      "[", "]", "_", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, ""
+    }
+};
+
+// Number of keyboard pages
+const int NUM_KEYBOARD_PAGES = sizeof(keyboard_maps) / sizeof(keyboard_maps[0]);
+
 void initStyles() {
+
+    
     lv_style_init(&style_screen);
     lv_style_set_bg_color(&style_screen, lv_color_hex(0x1E1E1E));
     lv_style_set_text_color(&style_screen, lv_color_hex(0xFFFFFF));
-    lv_style_set_text_font(&style_screen, &lv_font_montserrat_14);  // Default screen font
+    lv_style_set_text_font(&style_screen, &lv_font_montserrat_14);
 
     lv_style_init(&style_btn);
     lv_style_set_radius(&style_btn, 10);
@@ -98,7 +183,7 @@ void initStyles() {
     lv_style_set_bg_grad_dir(&style_btn, LV_GRAD_DIR_HOR);
     lv_style_set_border_width(&style_btn, 0);
     lv_style_set_text_color(&style_btn, lv_color_hex(0xFFFFFF));
-    lv_style_set_text_font(&style_btn, &lv_font_montserrat_16);  // Button font
+    lv_style_set_text_font(&style_btn, &lv_font_montserrat_16);
     lv_style_set_pad_all(&style_btn, 10);
 
     lv_style_init(&style_btn_pressed);
@@ -108,41 +193,42 @@ void initStyles() {
 
     lv_style_init(&style_title);
     lv_style_set_text_color(&style_title, lv_color_hex(0xFFFFFF));
-    lv_style_set_text_font(&style_title, &lv_font_montserrat_20);  // Title font
+    lv_style_set_text_font(&style_title, &lv_font_montserrat_20);
     
     lv_style_init(&style_text);
     lv_style_set_text_color(&style_text, lv_color_hex(0xFFFFFF));
-    lv_style_set_text_font(&style_text, &lv_font_montserrat_14);  // Regular text font
+    lv_style_set_text_font(&style_text, &lv_font_montserrat_14);
 }
 
 WiFiConnectionHandler ArduinoIoTPreferredConnection(SSID, PASS);
 
 void setup() {
-    // Initialize Serial for debugging
     Serial.begin(115200);
     while (!Serial) delay(10);
     DEBUG_PRINT("Starting Loss Prevention Log...");
     
-    // Initialize CoreS3
     auto cfg = M5.config();
     CoreS3.begin(cfg);
     DEBUG_PRINT("CoreS3 initialized");
     
-    // Set display brightness and clear screen
-    CoreS3.Display.setBrightness(100);
+    CoreS3.Display.setBrightness(255);
     CoreS3.Display.clear();
-    CoreS3.Display.setRotation(1);  // Landscape mode
+    CoreS3.Display.setRotation(1);
+    CoreS3.Power.begin();
+    CoreS3.Power.setChargeCurrent(1000);
     DEBUG_PRINT("Display configured");
-    
-    // Initialize LVGL
+
+    // Add battery status check
+    DEBUG_PRINTF("Battery Voltage: %f V\n", CoreS3.Power.getBatteryVoltage());
+    DEBUG_PRINTF("Is Charging: %d\n", CoreS3.Power.isCharging());
+    DEBUG_PRINTF("Battery Level: %d%%\n", CoreS3.Power.getBatteryLevel());
+
     lv_init();
     DEBUG_PRINT("LVGL initialized");
     
-    // Initialize the display buffer
     lv_disp_draw_buf_init(&draw_buf, buf1, NULL, SCREEN_WIDTH * 20);
     DEBUG_PRINT("Display buffer initialized");
     
-    // Initialize the display
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res = CoreS3.Display.width();
     disp_drv.ver_res = CoreS3.Display.height();
@@ -151,14 +237,12 @@ void setup() {
     lv_disp_drv_register(&disp_drv);
     DEBUG_PRINT("Display driver registered");
 
-    // Initialize the touchpad
     lv_indev_drv_init(&indev_drv);
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = my_touchpad_read;
     lv_indev_drv_register(&indev_drv);
     DEBUG_PRINT("Touch input driver registered");
 
-    // Initialize Arduino Cloud
     DEBUG_PRINT("Initializing Arduino Cloud connection...");
     ArduinoCloud.setBoardId(DEVICE_LOGIN_NAME);
     ArduinoCloud.setSecretDeviceKey(DEVICE_KEY);
@@ -167,7 +251,6 @@ void setup() {
     setDebugMessageLevel(2);
     DEBUG_PRINT("Arduino Cloud initialized");
 
-    // Initialize styles and create main menu
     initStyles();
     DEBUG_PRINT("UI styles initialized");
     createMainMenu();
@@ -185,16 +268,13 @@ void loop() {
     delay(5);
 }
 
-// Display flushing
 void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
     uint32_t w = (area->x2 - area->x1 + 1);
     uint32_t h = (area->y2 - area->y1 + 1);
-
     CoreS3.Display.startWrite();
     CoreS3.Display.setAddrWindow(area->x1, area->y1, w, h);
     CoreS3.Display.pushColors((uint16_t *)color_p, w * h);
     CoreS3.Display.endWrite();
-
     lv_disp_flush_ready(disp);
 }
 
@@ -210,15 +290,17 @@ void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) {
 }
 
 void createMainMenu() {
-    if (mainScreen) lv_obj_clean(mainScreen);
-    else {
-        mainScreen = lv_obj_create(NULL);
-        lv_obj_add_style(mainScreen, &style_screen, 0);
+    if (mainScreen) {
+        DEBUG_PRINT("Cleaning existing main screen");
+        lv_obj_del(mainScreen);
+        mainScreen = nullptr;
     }
+    mainScreen = lv_obj_create(NULL);
+    lv_obj_add_style(mainScreen, &style_screen, 0);
     lv_scr_load(mainScreen);
-    addWifiIndicator(mainScreen);  // Add WiFi indicator
+    DEBUG_PRINTF("Main screen created: %p\n", mainScreen);
+    addWifiIndicator(mainScreen);
 
-    // Header
     lv_obj_t *header = lv_obj_create(mainScreen);
     lv_obj_set_size(header, 320, 50);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x333333), 0);
@@ -227,7 +309,6 @@ void createMainMenu() {
     lv_obj_add_style(title, &style_title, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
 
-    // Buttons
     lv_obj_t *btn_new = lv_btn_create(mainScreen);
     lv_obj_set_size(btn_new, 280, 60);
     lv_obj_align(btn_new, LV_ALIGN_TOP_MID, 0, 60);
@@ -246,12 +327,11 @@ void createMainMenu() {
     lv_obj_t *label_wifi = lv_label_create(btn_wifi);
     lv_label_set_text(label_wifi, "Wi-Fi Settings");
     lv_obj_center(label_wifi);
-    lv_obj_add_event_cb(btn_wifi, [](lv_event_t *e) { createWifiSettingsScreen(); }, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_wifi, [](lv_event_t *e) { createWiFiScreen(); }, LV_EVENT_CLICKED, NULL);
 }
 
 void updateWifiIndicator() {
     if (!wifiIndicator) return;
-    
     if (WiFi.status() == WL_CONNECTED) {
         lv_label_set_text(wifiIndicator, LV_SYMBOL_WIFI);
         lv_obj_set_style_text_color(wifiIndicator, lv_color_hex(0x00FF00), 0);
@@ -268,7 +348,6 @@ void addWifiIndicator(lv_obj_t *screen) {
         lv_obj_del(wifiIndicator);
         wifiIndicator = nullptr;
     }
-    
     wifiIndicator = lv_label_create(screen);
     lv_obj_set_style_text_font(wifiIndicator, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_align(wifiIndicator, LV_TEXT_ALIGN_RIGHT, 0);
@@ -280,26 +359,18 @@ void addWifiIndicator(lv_obj_t *screen) {
     updateWifiIndicator();
 }
 
-void disconnectWifi(lv_event_t *e) {
-    Serial.println("Disconnecting...");
-    cloudPaused = true;
-    WiFi.disconnect(true);
-    delay(500);
-    WiFi.mode(WIFI_OFF);
-    Serial.println("Disconnected");
-    createWifiSettingsScreen();
-}
-
 void createGenderMenu() {
-    if (genderMenu) lv_obj_clean(genderMenu);
-    else {
-        genderMenu = lv_obj_create(NULL);
-        lv_obj_add_style(genderMenu, &style_screen, 0);
+    if (genderMenu) {
+        DEBUG_PRINT("Cleaning existing gender menu");
+        lv_obj_del(genderMenu);
+        genderMenu = nullptr;
     }
+    genderMenu = lv_obj_create(NULL);
+    lv_obj_add_style(genderMenu, &style_screen, 0);
     lv_scr_load(genderMenu);
-    addWifiIndicator(genderMenu);  // Add WiFi indicator
+    DEBUG_PRINTF("Gender menu created: %p\n", genderMenu);
+    addWifiIndicator(genderMenu);
 
-    // Header
     lv_obj_t *header = lv_obj_create(genderMenu);
     lv_obj_set_size(header, 320, 50);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x333333), 0);
@@ -308,7 +379,6 @@ void createGenderMenu() {
     lv_obj_add_style(title, &style_title, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
 
-    // Buttons
     for (int i = 0; i < 2; i++) {
         lv_obj_t *btn = lv_btn_create(genderMenu);
         lv_obj_set_size(btn, 280, 80);
@@ -320,26 +390,44 @@ void createGenderMenu() {
         lv_obj_center(label);
         lv_obj_add_event_cb(btn, [](lv_event_t *e) {
             currentEntry = String(lv_label_get_text(lv_obj_get_child(lv_event_get_target(e), 0))) + ",";
+            delay(100); // Small delay for stability
             createColorMenuShirt();
         }, LV_EVENT_CLICKED, NULL);
     }
+
+    // Add Back button
+    lv_obj_t *back_btn = lv_btn_create(genderMenu);
+    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_LEFT, 10, -10);
+    lv_obj_set_size(back_btn, 100, 40);
+    lv_obj_add_style(back_btn, &style_btn, 0);
+    lv_obj_add_style(back_btn, &style_btn_pressed, LV_STATE_PRESSED);
+    
+    lv_obj_t *back_label = lv_label_create(back_btn);
+    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
+    lv_obj_center(back_label);
+    
+    lv_obj_add_event_cb(back_btn, [](lv_event_t *e) {
+        delay(100);
+        DEBUG_PRINT("Returning to main menu");
+        createMainMenu();
+        if (genderMenu && genderMenu != lv_scr_act()) {
+            DEBUG_PRINTF("Cleaning old gender menu: %p\n", genderMenu);
+            lv_obj_del_async(genderMenu);
+            genderMenu = nullptr;
+        }
+    }, LV_EVENT_CLICKED, NULL);
 }
 
 void createColorMenuShirt() {
     DEBUG_PRINT("Creating Shirt Color Menu");
-    if (colorMenu) {
-        DEBUG_PRINT("Cleaning existing color menu");
-        lv_obj_clean(colorMenu);
-    } else {
-        DEBUG_PRINT("Creating new color menu");
-        colorMenu = lv_obj_create(NULL);
-        lv_obj_add_style(colorMenu, &style_screen, 0);
-    }
-    lv_scr_load(colorMenu);
-    addWifiIndicator(colorMenu);
+    
+    lv_obj_t* newMenu = lv_obj_create(NULL);
+    lv_obj_add_style(newMenu, &style_screen, 0);
+    DEBUG_PRINTF("New color menu created: %p\n", newMenu);
+    addWifiIndicator(newMenu);
 
     // Header
-    lv_obj_t *header = lv_obj_create(colorMenu);
+    lv_obj_t *header = lv_obj_create(newMenu);
     lv_obj_set_size(header, 320, 50);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x333333), 0);
     lv_obj_t *title = lv_label_create(header);
@@ -347,88 +435,204 @@ void createColorMenuShirt() {
     lv_obj_add_style(title, &style_title, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
 
-    // Color grid with scrolling
-    lv_obj_t *grid = lv_obj_create(colorMenu);
-    lv_obj_set_size(grid, 280, 180);
-    lv_obj_align(grid, LV_ALIGN_TOP_MID, 0, 60);
-    lv_obj_set_style_bg_color(grid, lv_color_hex(0x4A4A4A), 0);
-    lv_obj_set_style_pad_all(grid, 5, 0);
-    
-    // Enable scrolling
-    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_style_pad_row(grid, 5, 0);
-    lv_obj_set_style_pad_column(grid, 5, 0);
-    lv_obj_set_scroll_dir(grid, LV_DIR_VER);
-    lv_obj_set_scroll_snap_y(grid, LV_SCROLL_SNAP_CENTER);
-    lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_ACTIVE);
-    
-    // Set this as the current scroll object
-    current_scroll_obj = grid;
-    DEBUG_PRINT("Shirt Color Menu grid created and set as scroll object");
+    // Create a container for the color buttons
+    lv_obj_t *container = lv_obj_create(newMenu);
+    lv_obj_set_size(container, 300, 160);
+    lv_obj_align(container, LV_ALIGN_TOP_MID, 0, 60);
+    lv_obj_set_style_bg_opa(container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(container, 5, 0);
+    lv_obj_set_style_pad_row(container, 5, 0);
+    lv_obj_set_style_pad_column(container, 5, 0);
 
-    // Calculate array size for shirt colors
+    // Set up grid layout
+    static lv_coord_t col_dsc[] = {90, 90, 90, LV_GRID_TEMPLATE_LAST};
+    static lv_coord_t row_dsc[] = {40, 40, 40, LV_GRID_TEMPLATE_LAST};
+    lv_obj_set_grid_dsc_array(container, col_dsc, row_dsc);
+    
+    lv_obj_set_scroll_dir(container, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_add_flag(container, LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLLABLE);
+    current_scroll_obj = container;
+
+    // Static variable for drag tracking
+    static lv_point_t last_point = {0, 0};
+
+    // Drag-to-scroll handlers
+    lv_obj_add_event_cb(container, [](lv_event_t *e) {
+        lv_indev_t *indev = lv_indev_get_act();
+        lv_indev_get_point(indev, &last_point);
+    }, LV_EVENT_PRESSED, NULL);
+
+    lv_obj_add_event_cb(container, [](lv_event_t *e) {
+        lv_obj_t *container = (lv_obj_t*)lv_event_get_user_data(e);
+        lv_indev_t *indev = lv_indev_get_act();
+        lv_point_t curr_point;
+        lv_indev_get_point(indev, &curr_point);
+        lv_coord_t delta_y = last_point.y - curr_point.y;
+        lv_obj_scroll_by(container, 0, delta_y, LV_ANIM_OFF);
+        last_point = curr_point;
+    }, LV_EVENT_PRESSING, container);
+
     int numShirtColors = sizeof(shirtColors) / sizeof(shirtColors[0]);
     DEBUG_PRINTF("Creating %d shirt color buttons\n", numShirtColors);
-    
+
+    String selectedColors = "";
+
     for (int i = 0; i < numShirtColors; i++) {
-        lv_obj_t *btn = lv_btn_create(grid);
-        lv_obj_set_size(btn, 90, 50);
+        lv_obj_t *btn = lv_btn_create(container);
+        lv_obj_set_size(btn, 90, 40);
         lv_obj_add_style(btn, &style_btn, 0);
         lv_obj_add_style(btn, &style_btn_pressed, LV_STATE_PRESSED);
+        lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, i % 3, 1, LV_GRID_ALIGN_STRETCH, i / 3, 1);
+        lv_obj_set_user_data(btn, (void*)i);
+        
         lv_obj_t *label = lv_label_create(btn);
         lv_label_set_text(label, shirtColors[i]);
         lv_obj_center(label);
-        
-        // Store the color index in the button's user data
-        int* colorIndex = (int*)lv_mem_alloc(sizeof(int));
-        *colorIndex = i;
+
         lv_obj_add_event_cb(btn, [](lv_event_t *e) {
             lv_obj_t *btn = lv_event_get_target(e);
-            int* idx = (int*)lv_obj_get_user_data(btn);
-            if (idx != nullptr) {
-                const char* selectedColor = shirtColors[*idx];
-                DEBUG_PRINTF("Selected shirt color: %s\n", selectedColor);
-                currentEntry += String(selectedColor) + ",";
-                DEBUG_PRINTF("Current entry: %s\n", currentEntry.c_str());
-                
-                // Free the index memory
-                lv_mem_free(idx);
+            int idx = (int)lv_obj_get_user_data(btn);
+            bool is_selected = lv_obj_has_state(btn, LV_STATE_USER_1);
+
+            static String selectedColors;
+
+            if (!is_selected) {
+                lv_obj_add_state(btn, LV_STATE_USER_1);
+                lv_obj_set_style_border_width(btn, 3, LV_PART_MAIN);
+                lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFF00), LV_PART_MAIN);
+                if (!selectedColors.isEmpty()) selectedColors += "+";
+                selectedColors += shirtColors[idx];
+            } else {
+                lv_obj_clear_state(btn, LV_STATE_USER_1);
+                lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
+                lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+                int pos = selectedColors.indexOf(shirtColors[idx]);
+                if (pos >= 0) {
+                    int nextPlus = selectedColors.indexOf("+", pos);
+                    if (nextPlus >= 0) {
+                        selectedColors.remove(pos, nextPlus - pos + 1);
+                    } else {
+                        if (pos > 0) selectedColors.remove(pos - 1, String(shirtColors[idx]).length() + 1);
+                        else selectedColors.remove(pos, String(shirtColors[idx]).length());
+                    }
+                }
             }
             
-            // Clear current scroll object and prep for transition
-            current_scroll_obj = nullptr;
-            lv_obj_t* old_screen = lv_scr_act();
+            DEBUG_PRINTF("Selected shirt colors: %s\n", selectedColors.c_str());
             
-            // Schedule the transition to prevent potential crash
-            lv_async_call([](void*) {
-                DEBUG_PRINT("Creating pants menu after shirt selection");
-                createColorMenuPants();
-            }, nullptr);
-            
-            // Delete the old screen after scheduling the transition
-            lv_obj_del_async(old_screen);
+            if (!selectedColors.isEmpty()) {
+                if (shirt_next_btn == nullptr) {
+                    shirt_next_btn = lv_btn_create(lv_obj_get_parent(lv_obj_get_parent(btn)));
+                    lv_obj_align(shirt_next_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+                    lv_obj_set_size(shirt_next_btn, 100, 40);
+                    lv_obj_add_style(shirt_next_btn, &style_btn, 0);
+                    lv_obj_add_style(shirt_next_btn, &style_btn_pressed, LV_STATE_PRESSED);
+                    
+                    lv_obj_t* next_label = lv_label_create(shirt_next_btn);
+                    lv_label_set_text(next_label, "Next " LV_SYMBOL_RIGHT);
+                    lv_obj_center(next_label);
+                    
+                    String* selectedColorsPtr = &selectedColors;
+                    
+                    lv_obj_add_event_cb(shirt_next_btn, [](lv_event_t* e) {
+                        String* selectedColorsPtr = (String*)lv_event_get_user_data(e);
+                        
+                        currentEntry += *selectedColorsPtr + ",";
+                        DEBUG_PRINTF("Current entry: %s\n", currentEntry.c_str());
+                        delay(100);
+                        DEBUG_PRINT("Transitioning to pants menu");
+                        createColorMenuPants();
+                        if (colorMenu && colorMenu != lv_scr_act()) {
+                            DEBUG_PRINTF("Cleaning old color menu: %p\n", colorMenu);
+                            lv_obj_del_async(colorMenu);
+                            colorMenu = nullptr;
+                        }
+                        DEBUG_PRINT("Shirt menu transition complete");
+                    }, LV_EVENT_CLICKED, selectedColorsPtr);
+                }
+            }
         }, LV_EVENT_CLICKED, NULL);
-        lv_obj_set_user_data(btn, colorIndex);
-        
-        DEBUG_PRINTF("Created button for color: %s\n", shirtColors[i]);
     }
+
+    // Set button colors based on their names
+    for (int i = 0; i < numShirtColors; i++) {
+        lv_obj_t *btn = lv_obj_get_child(container, i);
+        if (btn && lv_obj_check_type(btn, &lv_btn_class)) {
+            // Set button background color to match the actual color it represents
+            uint32_t color_hex = 0x4A4A4A; // Default gray
+            if (strcmp(shirtColors[i], "White") == 0) color_hex = 0xFFFFFF;
+            else if (strcmp(shirtColors[i], "Black") == 0) color_hex = 0x000000;
+            else if (strcmp(shirtColors[i], "Red") == 0) color_hex = 0xFF0000;
+            else if (strcmp(shirtColors[i], "Orange") == 0) color_hex = 0xFFA500;
+            else if (strcmp(shirtColors[i], "Yellow") == 0) color_hex = 0xFFFF00;
+            else if (strcmp(shirtColors[i], "Green") == 0) color_hex = 0x00FF00;
+            else if (strcmp(shirtColors[i], "Blue") == 0) color_hex = 0x0000FF;
+            else if (strcmp(shirtColors[i], "Purple") == 0) color_hex = 0x800080;
+            
+            lv_obj_set_style_bg_color(btn, lv_color_hex(color_hex), 0);
+            lv_obj_set_style_bg_color(btn, lv_color_hex(color_hex), LV_STATE_PRESSED);
+            
+            // Adjust text color for visibility based on background
+            uint32_t text_color = 0xFFFFFF; // Default white text
+            if (strcmp(shirtColors[i], "White") == 0 || 
+                strcmp(shirtColors[i], "Yellow") == 0) {
+                text_color = 0x000000; // Black text for light backgrounds
+            }
+            
+            lv_obj_t *label = lv_obj_get_child(btn, 0);
+            if (label && lv_obj_check_type(label, &lv_label_class)) {
+                lv_obj_set_style_text_color(label, lv_color_hex(text_color), 0);
+            }
+        }
+    }
+
+    lv_obj_t *back_btn = lv_btn_create(newMenu);
+    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_LEFT, 10, -10);
+    lv_obj_set_size(back_btn, 100, 40);
+    lv_obj_add_style(back_btn, &style_btn, 0);
+    lv_obj_add_style(back_btn, &style_btn_pressed, LV_STATE_PRESSED);
+    
+    lv_obj_t *back_label = lv_label_create(back_btn);
+    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
+    lv_obj_center(back_label);
+    
+    lv_obj_add_event_cb(back_btn, [](lv_event_t *e) {
+        delay(100);
+        DEBUG_PRINT("Returning to gender menu");
+        
+        // Reset static next button pointers
+        shirt_next_btn = nullptr;
+        pants_next_btn = nullptr;
+        shoes_next_btn = nullptr;
+        
+        createGenderMenu();
+        if (colorMenu && colorMenu != lv_scr_act()) {
+            DEBUG_PRINTF("Cleaning old color menu: %p\n", colorMenu);
+            lv_obj_del_async(colorMenu);
+            colorMenu = nullptr;
+        }
+    }, LV_EVENT_CLICKED, NULL);
+    
+    lv_scr_load(newMenu);
+    
+    if (colorMenu && colorMenu != newMenu) {
+        DEBUG_PRINTF("Cleaning existing color menu: %p\n", colorMenu);
+        lv_obj_del_async(colorMenu);
+    }
+    
+    colorMenu = newMenu;
 }
 
 void createColorMenuPants() {
     DEBUG_PRINT("Creating Pants Color Menu");
-    if (colorMenu) {
-        DEBUG_PRINT("Cleaning existing color menu");
-        lv_obj_clean(colorMenu);
-    } else {
-        DEBUG_PRINT("Creating new color menu");
-        colorMenu = lv_obj_create(NULL);
-        lv_obj_add_style(colorMenu, &style_screen, 0);
-    }
-    lv_scr_load(colorMenu);
-    addWifiIndicator(colorMenu);  // Add WiFi indicator
+    
+    lv_obj_t* newMenu = lv_obj_create(NULL);
+    lv_obj_add_style(newMenu, &style_screen, 0);
+    DEBUG_PRINTF("New color menu created: %p\n", newMenu);
+    addWifiIndicator(newMenu);
 
-    // Header
-    lv_obj_t *header = lv_obj_create(colorMenu);
+    lv_obj_t *header = lv_obj_create(newMenu);
     lv_obj_set_size(header, 320, 50);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x333333), 0);
     lv_obj_t *title = lv_label_create(header);
@@ -436,83 +640,207 @@ void createColorMenuPants() {
     lv_obj_add_style(title, &style_title, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
 
-    // Color grid with scrolling
-    lv_obj_t *grid = lv_obj_create(colorMenu);
-    lv_obj_set_size(grid, 280, 180);
-    lv_obj_align(grid, LV_ALIGN_TOP_MID, 0, 60);
-    lv_obj_set_style_bg_opa(grid, LV_OPA_TRANSP, 0);
-    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_style_pad_all(grid, 5, 0);
-    lv_obj_set_scroll_dir(grid, LV_DIR_VER);
-    lv_obj_set_scroll_snap_y(grid, LV_SCROLL_SNAP_CENTER);
-    lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_t *container = lv_obj_create(newMenu);
+    lv_obj_set_size(container, 300, 150);
+    lv_obj_align(container, LV_ALIGN_TOP_MID, 0, 60);
+    lv_obj_set_style_bg_opa(container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(container, 5, 0);
+    lv_obj_set_style_pad_row(container, 8, 0);
+    lv_obj_set_style_pad_column(container, 8, 0);
     
-    // Set this as the current scroll object
-    current_scroll_obj = grid;
-    DEBUG_PRINT("Pants Color Menu grid created and set as scroll object");
+    static const lv_coord_t col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+    static const lv_coord_t row_dsc[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+    
+    lv_obj_set_grid_dsc_array(container, col_dsc, row_dsc);
+    lv_obj_set_layout(container, LV_LAYOUT_GRID);
+    lv_obj_set_scroll_dir(container, LV_DIR_VER);
+    lv_obj_set_scroll_snap_y(container, LV_SCROLL_SNAP_CENTER);
+    lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_add_flag(container, LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLLABLE);
+    current_scroll_obj = container;
 
-    // Calculate array size for pants colors
+    // Static variable for drag tracking
+    static lv_point_t last_point = {0, 0};
+
+    // Drag-to-scroll handlers
+    lv_obj_add_event_cb(container, [](lv_event_t *e) {
+        lv_indev_t *indev = lv_indev_get_act();
+        lv_indev_get_point(indev, &last_point);
+    }, LV_EVENT_PRESSED, NULL);
+
+    lv_obj_add_event_cb(container, [](lv_event_t *e) {
+        lv_obj_t *container = (lv_obj_t*)lv_event_get_user_data(e);
+        lv_indev_t *indev = lv_indev_get_act();
+        lv_point_t curr_point;
+        lv_indev_get_point(indev, &curr_point);
+        lv_coord_t delta_y = last_point.y - curr_point.y;
+        lv_obj_scroll_by(container, 0, delta_y, LV_ANIM_OFF);
+        last_point = curr_point;
+    }, LV_EVENT_PRESSING, container);
+
     int numPantsColors = sizeof(pantsColors) / sizeof(pantsColors[0]);
-    
+    DEBUG_PRINTF("Creating %d pants color buttons\n", numPantsColors);
+
+    String selectedColors = "";
+
     for (int i = 0; i < numPantsColors; i++) {
-        lv_obj_t *btn = lv_btn_create(grid);
-        lv_obj_set_size(btn, 90, 50);
+        lv_obj_t *btn = lv_btn_create(container);
+        lv_obj_set_size(btn, 90, 30);
         lv_obj_add_style(btn, &style_btn, 0);
         lv_obj_add_style(btn, &style_btn_pressed, LV_STATE_PRESSED);
+        lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, i % 3, 1, LV_GRID_ALIGN_STRETCH, i / 3, 1);
+        lv_obj_set_user_data(btn, (void*)i);
+        
         lv_obj_t *label = lv_label_create(btn);
         lv_label_set_text(label, pantsColors[i]);
         lv_obj_center(label);
-        
-        // Store the color index in the button's user data
-        int* colorIndex = (int*)lv_mem_alloc(sizeof(int));
-        *colorIndex = i;
+
         lv_obj_add_event_cb(btn, [](lv_event_t *e) {
             lv_obj_t *btn = lv_event_get_target(e);
-            int* idx = (int*)lv_obj_get_user_data(btn);
-            if (idx != nullptr) {
-                const char* selectedColor = pantsColors[*idx];
-                DEBUG_PRINTF("Selected pants color: %s\n", selectedColor);
-                currentEntry += String(selectedColor) + ",";
-                DEBUG_PRINTF("Current entry: %s\n", currentEntry.c_str());
-                
-                // Free the index memory
-                lv_mem_free(idx);
+            int idx = (int)lv_obj_get_user_data(btn);
+            bool is_selected = lv_obj_has_state(btn, LV_STATE_USER_1);
+
+            static String selectedColors;
+
+            if (!is_selected) {
+                lv_obj_add_state(btn, LV_STATE_USER_1);
+                lv_obj_set_style_border_width(btn, 3, LV_PART_MAIN);
+                lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFF00), LV_PART_MAIN);
+                if (!selectedColors.isEmpty()) selectedColors += "+";
+                selectedColors += pantsColors[idx];
+            } else {
+                lv_obj_clear_state(btn, LV_STATE_USER_1);
+                lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
+                lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+                int pos = selectedColors.indexOf(pantsColors[idx]);
+                if (pos >= 0) {
+                    int nextPlus = selectedColors.indexOf("+", pos);
+                    if (nextPlus >= 0) {
+                        selectedColors.remove(pos, nextPlus - pos + 1);
+                    } else {
+                        if (pos > 0) selectedColors.remove(pos - 1, String(pantsColors[idx]).length() + 1);
+                        else selectedColors.remove(pos, String(pantsColors[idx]).length());
+                    }
+                }
             }
             
-            // Clear current scroll object and prep for transition
-            current_scroll_obj = nullptr;
-            lv_obj_t* old_screen = lv_scr_act();
+            DEBUG_PRINTF("Selected pants colors: %s\n", selectedColors.c_str());
             
-            // Schedule the transition to prevent potential crash
-            lv_async_call([](void*) {
-                DEBUG_PRINT("Creating shoes menu after pants selection");
-                createColorMenuShoes();
-            }, nullptr);
-            
-            // Delete the old screen after scheduling the transition
-            lv_obj_del_async(old_screen);
+            if (!selectedColors.isEmpty()) {
+                if (pants_next_btn == nullptr) {
+                    pants_next_btn = lv_btn_create(lv_obj_get_parent(lv_obj_get_parent(btn)));
+                    lv_obj_align(pants_next_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+                    lv_obj_set_size(pants_next_btn, 100, 40);
+                    lv_obj_add_style(pants_next_btn, &style_btn, 0);
+                    lv_obj_add_style(pants_next_btn, &style_btn_pressed, LV_STATE_PRESSED);
+                    
+                    lv_obj_t* next_label = lv_label_create(pants_next_btn);
+                    lv_label_set_text(next_label, "Next " LV_SYMBOL_RIGHT);
+                    lv_obj_center(next_label);
+                    
+                    String* selectedColorsPtr = &selectedColors;
+                    
+                    lv_obj_add_event_cb(pants_next_btn, [](lv_event_t* e) {
+                        String* selectedColorsPtr = (String*)lv_event_get_user_data(e);
+                        
+                        currentEntry += *selectedColorsPtr + ",";
+                        DEBUG_PRINTF("Current entry: %s\n", currentEntry.c_str());
+                        delay(100);
+                        DEBUG_PRINT("Transitioning to shoes menu");
+                        createColorMenuShoes();
+                        if (colorMenu && colorMenu != lv_scr_act()) {
+                            DEBUG_PRINTF("Cleaning old color menu: %p\n", colorMenu);
+                            lv_obj_del_async(colorMenu);
+                            colorMenu = nullptr;
+                        }
+                        DEBUG_PRINT("Pants menu transition complete");
+                    }, LV_EVENT_CLICKED, selectedColorsPtr);
+                }
+            }
         }, LV_EVENT_CLICKED, NULL);
-        lv_obj_set_user_data(btn, colorIndex);
-        
-        DEBUG_PRINTF("Created button for color: %s\n", pantsColors[i]);
     }
+
+    // Set button colors based on their names
+    for (int i = 0; i < numPantsColors; i++) {
+        lv_obj_t *btn = lv_obj_get_child(container, i);
+        if (btn && lv_obj_check_type(btn, &lv_btn_class)) {
+            // Set button background color to match the actual color it represents
+            uint32_t color_hex = 0x4A4A4A; // Default gray
+            if (strcmp(pantsColors[i], "White") == 0) color_hex = 0xFFFFFF;
+            else if (strcmp(pantsColors[i], "Black") == 0) color_hex = 0x000000;
+            else if (strcmp(pantsColors[i], "Red") == 0) color_hex = 0xFF0000;
+            else if (strcmp(pantsColors[i], "Orange") == 0) color_hex = 0xFFA500;
+            else if (strcmp(pantsColors[i], "Yellow") == 0) color_hex = 0xFFFF00;
+            else if (strcmp(pantsColors[i], "Green") == 0) color_hex = 0x00FF00;
+            else if (strcmp(pantsColors[i], "Blue") == 0) color_hex = 0x0000FF;
+            else if (strcmp(pantsColors[i], "Purple") == 0) color_hex = 0x800080;
+            else if (strcmp(pantsColors[i], "Brown") == 0) color_hex = 0x8B4513;
+            else if (strcmp(pantsColors[i], "Grey") == 0) color_hex = 0x808080;
+            else if (strcmp(pantsColors[i], "Tan") == 0) color_hex = 0xD2B48C;
+            
+            lv_obj_set_style_bg_color(btn, lv_color_hex(color_hex), 0);
+            lv_obj_set_style_bg_color(btn, lv_color_hex(color_hex), LV_STATE_PRESSED);
+            
+            // Adjust text color for visibility based on background
+            uint32_t text_color = 0xFFFFFF; // Default white text
+            if (strcmp(pantsColors[i], "White") == 0 || 
+                strcmp(pantsColors[i], "Yellow") == 0 ||
+                strcmp(pantsColors[i], "Tan") == 0) {
+                text_color = 0x000000; // Black text for light backgrounds
+            }
+            
+            lv_obj_t *label = lv_obj_get_child(btn, 0);
+            if (label && lv_obj_check_type(label, &lv_label_class)) {
+                lv_obj_set_style_text_color(label, lv_color_hex(text_color), 0);
+            }
+        }
+    }
+
+    lv_obj_t *back_btn = lv_btn_create(newMenu);
+    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_LEFT, 10, -10);
+    lv_obj_set_size(back_btn, 100, 40);
+    lv_obj_add_style(back_btn, &style_btn, 0);
+    lv_obj_add_style(back_btn, &style_btn_pressed, LV_STATE_PRESSED);
+    
+    lv_obj_t *back_label = lv_label_create(back_btn);
+    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
+    lv_obj_center(back_label);
+    
+    lv_obj_add_event_cb(back_btn, [](lv_event_t *e) {
+        delay(100);
+        DEBUG_PRINT("Returning to shirt menu");
+        
+        // Reset next button pointers
+        pants_next_btn = nullptr;
+        shoes_next_btn = nullptr;
+        
+        createColorMenuShirt();
+        if (colorMenu && colorMenu != lv_scr_act()) {
+            DEBUG_PRINTF("Cleaning old color menu: %p\n", colorMenu);
+            lv_obj_del_async(colorMenu);
+            colorMenu = nullptr;
+        }
+    }, LV_EVENT_CLICKED, NULL);
+    
+    lv_scr_load(newMenu);
+    
+    if (colorMenu && colorMenu != newMenu) {
+        DEBUG_PRINTF("Cleaning existing color menu: %p\n", colorMenu);
+        lv_obj_del_async(colorMenu);
+    }
+    
+    colorMenu = newMenu;
 }
 
 void createColorMenuShoes() {
     DEBUG_PRINT("Creating Shoes Color Menu");
-    if (colorMenu) {
-        DEBUG_PRINT("Cleaning existing color menu");
-        lv_obj_clean(colorMenu);
-    } else {
-        DEBUG_PRINT("Creating new color menu");
-        colorMenu = lv_obj_create(NULL);
-        lv_obj_add_style(colorMenu, &style_screen, 0);
-    }
-    lv_scr_load(colorMenu);
-    addWifiIndicator(colorMenu);  // Add WiFi indicator
+    
+    lv_obj_t* newMenu = lv_obj_create(NULL);
+    lv_obj_add_style(newMenu, &style_screen, 0);
+    DEBUG_PRINTF("New color menu created: %p\n", newMenu);
+    addWifiIndicator(newMenu);
 
-    // Header
-    lv_obj_t *header = lv_obj_create(colorMenu);
+    lv_obj_t *header = lv_obj_create(newMenu);
     lv_obj_set_size(header, 320, 50);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x333333), 0);
     lv_obj_t *title = lv_label_create(header);
@@ -520,79 +848,209 @@ void createColorMenuShoes() {
     lv_obj_add_style(title, &style_title, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
 
-    // Color grid with scrolling
-    lv_obj_t *grid = lv_obj_create(colorMenu);
-    lv_obj_set_size(grid, 280, 180);
-    lv_obj_align(grid, LV_ALIGN_TOP_MID, 0, 60);
-    lv_obj_set_style_bg_opa(grid, LV_OPA_TRANSP, 0);
-    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_style_pad_all(grid, 5, 0);
-    lv_obj_set_scroll_dir(grid, LV_DIR_VER);
-    lv_obj_set_scroll_snap_y(grid, LV_SCROLL_SNAP_CENTER);
-    lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_t *container = lv_obj_create(newMenu);
+    lv_obj_set_size(container, 300, 150);
+    lv_obj_align(container, LV_ALIGN_TOP_MID, 0, 60);
+    lv_obj_set_style_bg_opa(container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(container, 5, 0);
+    lv_obj_set_style_pad_row(container, 8, 0);
+    lv_obj_set_style_pad_column(container, 8, 0);
     
-    // Set this as the current scroll object
-    current_scroll_obj = grid;
-    DEBUG_PRINT("Shoes Color Menu grid created and set as scroll object");
+    static const lv_coord_t col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+    static const lv_coord_t row_dsc[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+    
+    lv_obj_set_grid_dsc_array(container, col_dsc, row_dsc);
+    lv_obj_set_layout(container, LV_LAYOUT_GRID);
+    lv_obj_set_scroll_dir(container, LV_DIR_VER);
+    lv_obj_set_scroll_snap_y(container, LV_SCROLL_SNAP_CENTER);
+    lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_add_flag(container, LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLLABLE);
+    current_scroll_obj = container;
 
-    // Calculate array size for shoe colors
+    // Static variable for drag tracking
+    static lv_point_t last_point = {0, 0};
+
+    // Drag-to-scroll handlers
+    lv_obj_add_event_cb(container, [](lv_event_t *e) {
+        lv_indev_t *indev = lv_indev_get_act();
+        lv_indev_get_point(indev, &last_point);
+    }, LV_EVENT_PRESSED, NULL);
+
+    lv_obj_add_event_cb(container, [](lv_event_t *e) {
+        lv_obj_t *container = (lv_obj_t*)lv_event_get_user_data(e);
+        lv_indev_t *indev = lv_indev_get_act();
+        lv_point_t curr_point;
+        lv_indev_get_point(indev, &curr_point);
+        lv_coord_t delta_y = last_point.y - curr_point.y;
+        lv_obj_scroll_by(container, 0, delta_y, LV_ANIM_OFF);
+        last_point = curr_point;
+    }, LV_EVENT_PRESSING, container);
+
     int numShoeColors = sizeof(shoeColors) / sizeof(shoeColors[0]);
     DEBUG_PRINTF("Creating %d shoe color buttons\n", numShoeColors);
-    
+
+    String selectedColors = "";
+
     for (int i = 0; i < numShoeColors; i++) {
-        lv_obj_t *btn = lv_btn_create(grid);
-        lv_obj_set_size(btn, 90, 50);
+        lv_obj_t *btn = lv_btn_create(container);
+        lv_obj_set_size(btn, 90, 30);
         lv_obj_add_style(btn, &style_btn, 0);
         lv_obj_add_style(btn, &style_btn_pressed, LV_STATE_PRESSED);
+        lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, i % 3, 1, LV_GRID_ALIGN_STRETCH, i / 3, 1);
+        lv_obj_set_user_data(btn, (void*)i);
+        
         lv_obj_t *label = lv_label_create(btn);
         lv_label_set_text(label, shoeColors[i]);
         lv_obj_center(label);
-        
-        // Store the color index in the button's user data
-        int* colorIndex = (int*)lv_mem_alloc(sizeof(int));
-        *colorIndex = i;
+
         lv_obj_add_event_cb(btn, [](lv_event_t *e) {
             lv_obj_t *btn = lv_event_get_target(e);
-            int* idx = (int*)lv_obj_get_user_data(btn);
-            if (idx != nullptr) {
-                const char* selectedColor = shoeColors[*idx];
-                DEBUG_PRINTF("Selected shoe color: %s\n", selectedColor);
-                currentEntry += String(selectedColor) + ",";
-                DEBUG_PRINTF("Current entry: %s\n", currentEntry.c_str());
-                
-                // Free the index memory
-                lv_mem_free(idx);
+            int idx = (int)lv_obj_get_user_data(btn);
+            bool is_selected = lv_obj_has_state(btn, LV_STATE_USER_1);
+
+            static String selectedColors;
+
+            if (!is_selected) {
+                lv_obj_add_state(btn, LV_STATE_USER_1);
+                lv_obj_set_style_border_width(btn, 3, LV_PART_MAIN);
+                lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFF00), LV_PART_MAIN);
+                if (!selectedColors.isEmpty()) selectedColors += "+";
+                selectedColors += shoeColors[idx];
+            } else {
+                lv_obj_clear_state(btn, LV_STATE_USER_1);
+                lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
+                lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+                int pos = selectedColors.indexOf(shoeColors[idx]);
+                if (pos >= 0) {
+                    int nextPlus = selectedColors.indexOf("+", pos);
+                    if (nextPlus >= 0) {
+                        selectedColors.remove(pos, nextPlus - pos + 1);
+                    } else {
+                        if (pos > 0) selectedColors.remove(pos - 1, String(shoeColors[idx]).length() + 1);
+                        else selectedColors.remove(pos, String(shoeColors[idx]).length());
+                    }
+                }
             }
             
-            // Clear current scroll object and prep for transition
-            current_scroll_obj = nullptr;
-            lv_obj_t* old_screen = lv_scr_act();
+            DEBUG_PRINTF("Selected shoe colors: %s\n", selectedColors.c_str());
             
-            // Schedule the transition to prevent potential crash
-            lv_async_call([](void*) {
-                DEBUG_PRINT("Creating item menu after shoe selection");
-                createItemMenu();
-            }, nullptr);
-            
-            // Delete the old screen after scheduling the transition
-            lv_obj_del_async(old_screen);
+            if (!selectedColors.isEmpty()) {
+                if (shoes_next_btn == nullptr) {
+                    shoes_next_btn = lv_btn_create(lv_obj_get_parent(lv_obj_get_parent(btn)));
+                    lv_obj_align(shoes_next_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+                    lv_obj_set_size(shoes_next_btn, 100, 40);
+                    lv_obj_add_style(shoes_next_btn, &style_btn, 0);
+                    lv_obj_add_style(shoes_next_btn, &style_btn_pressed, LV_STATE_PRESSED);
+                    
+                    lv_obj_t* next_label = lv_label_create(shoes_next_btn);
+                    lv_label_set_text(next_label, "Next " LV_SYMBOL_RIGHT);
+                    lv_obj_center(next_label);
+                    
+                    String* selectedColorsPtr = &selectedColors;
+                    
+                    lv_obj_add_event_cb(shoes_next_btn, [](lv_event_t* e) {
+                        String* selectedColorsPtr = (String*)lv_event_get_user_data(e);
+                        
+                        currentEntry += *selectedColorsPtr + ",";
+                        DEBUG_PRINTF("Current entry: %s\n", currentEntry.c_str());
+                        delay(100);
+                        DEBUG_PRINT("Transitioning to item menu");
+                        createItemMenu();
+                        if (colorMenu && colorMenu != lv_scr_act()) {
+                            DEBUG_PRINTF("Cleaning old color menu: %p\n", colorMenu);
+                            lv_obj_del_async(colorMenu);
+                            colorMenu = nullptr;
+                        }
+                        DEBUG_PRINT("Shoes menu transition complete");
+                    }, LV_EVENT_CLICKED, selectedColorsPtr);
+                }
+            }
         }, LV_EVENT_CLICKED, NULL);
-        lv_obj_set_user_data(btn, colorIndex);
-        
-        DEBUG_PRINTF("Created button for color: %s\n", shoeColors[i]);
     }
+
+    // Set button colors based on their names
+    for (int i = 0; i < numShoeColors; i++) {
+        lv_obj_t *btn = lv_obj_get_child(container, i);
+        if (btn && lv_obj_check_type(btn, &lv_btn_class)) {
+            // Set button background color to match the actual color it represents
+            uint32_t color_hex = 0x4A4A4A; // Default gray
+            if (strcmp(shoeColors[i], "White") == 0) color_hex = 0xFFFFFF;
+            else if (strcmp(shoeColors[i], "Black") == 0) color_hex = 0x000000;
+            else if (strcmp(shoeColors[i], "Red") == 0) color_hex = 0xFF0000;
+            else if (strcmp(shoeColors[i], "Orange") == 0) color_hex = 0xFFA500;
+            else if (strcmp(shoeColors[i], "Yellow") == 0) color_hex = 0xFFFF00;
+            else if (strcmp(shoeColors[i], "Green") == 0) color_hex = 0x00FF00;
+            else if (strcmp(shoeColors[i], "Blue") == 0) color_hex = 0x0000FF;
+            else if (strcmp(shoeColors[i], "Purple") == 0) color_hex = 0x800080;
+            else if (strcmp(shoeColors[i], "Brown") == 0) color_hex = 0x8B4513;
+            else if (strcmp(shoeColors[i], "Grey") == 0) color_hex = 0x808080;
+            else if (strcmp(shoeColors[i], "Tan") == 0) color_hex = 0xD2B48C;
+            
+            lv_obj_set_style_bg_color(btn, lv_color_hex(color_hex), 0);
+            lv_obj_set_style_bg_color(btn, lv_color_hex(color_hex), LV_STATE_PRESSED);
+            
+            // Adjust text color for visibility based on background
+            uint32_t text_color = 0xFFFFFF; // Default white text
+            if (strcmp(shoeColors[i], "White") == 0 || 
+                strcmp(shoeColors[i], "Yellow") == 0 ||
+                strcmp(shoeColors[i], "Tan") == 0) {
+                text_color = 0x000000; // Black text for light backgrounds
+            }
+            
+            lv_obj_t *label = lv_obj_get_child(btn, 0);
+            if (label && lv_obj_check_type(label, &lv_label_class)) {
+                lv_obj_set_style_text_color(label, lv_color_hex(text_color), 0);
+            }
+        }
+    }
+
+    lv_obj_t *back_btn = lv_btn_create(newMenu);
+    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_LEFT, 10, -10);
+    lv_obj_set_size(back_btn, 100, 40);
+    lv_obj_add_style(back_btn, &style_btn, 0);
+    lv_obj_add_style(back_btn, &style_btn_pressed, LV_STATE_PRESSED);
+    
+    lv_obj_t *back_label = lv_label_create(back_btn);
+    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
+    lv_obj_center(back_label);
+    
+    lv_obj_add_event_cb(back_btn, [](lv_event_t *e) {
+        delay(100);
+        DEBUG_PRINT("Returning to pants menu");
+        
+        // Reset next button pointer
+        shoes_next_btn = nullptr;
+        
+        createColorMenuPants();
+        if (colorMenu && colorMenu != lv_scr_act()) {
+            DEBUG_PRINTF("Cleaning old color menu: %p\n", colorMenu);
+            lv_obj_del_async(colorMenu);
+            colorMenu = nullptr;
+        }
+    }, LV_EVENT_CLICKED, NULL);
+    
+    lv_scr_load(newMenu);
+    
+    if (colorMenu && colorMenu != newMenu) {
+        DEBUG_PRINTF("Cleaning existing color menu: %p\n", colorMenu);
+        lv_obj_del_async(colorMenu);
+    }
+    
+    colorMenu = newMenu;
 }
 
 void createItemMenu() {
-    if (itemMenu) lv_obj_clean(itemMenu);
-    else {
-        itemMenu = lv_obj_create(NULL);
-        lv_obj_add_style(itemMenu, &style_screen, 0);
+    if (itemMenu) {
+        DEBUG_PRINT("Cleaning existing item menu");
+        lv_obj_del(itemMenu);
+        itemMenu = nullptr;
     }
+    itemMenu = lv_obj_create(NULL);
+    lv_obj_add_style(itemMenu, &style_screen, 0);
     lv_scr_load(itemMenu);
-    addWifiIndicator(itemMenu);  // Add WiFi indicator
+    DEBUG_PRINTF("Item menu created: %p\n", itemMenu);
+    addWifiIndicator(itemMenu);
 
-    // Header
     lv_obj_t *header = lv_obj_create(itemMenu);
     lv_obj_set_size(header, 320, 50);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x333333), 0);
@@ -601,16 +1059,12 @@ void createItemMenu() {
     lv_obj_add_style(title, &style_title, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
 
-    // Create scrollable container
     lv_obj_t *list_cont = lv_obj_create(itemMenu);
     lv_obj_set_size(list_cont, 280, 180);
     lv_obj_align(list_cont, LV_ALIGN_TOP_MID, 0, 60);
     lv_obj_set_style_bg_color(list_cont, lv_color_hex(0x4A4A4A), 0);
-    lv_obj_set_style_pad_all(list_cont, 5, 0);
-    
-    // Enable scrolling
     lv_obj_set_flex_flow(list_cont, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(list_cont, 5, 0);
+    lv_obj_set_style_pad_all(list_cont, 5, 0);
     lv_obj_set_scroll_dir(list_cont, LV_DIR_VER);
     lv_obj_set_scroll_snap_y(list_cont, LV_SCROLL_SNAP_CENTER);
     lv_obj_set_scrollbar_mode(list_cont, LV_SCROLLBAR_MODE_ACTIVE);
@@ -628,21 +1082,24 @@ void createItemMenu() {
         lv_obj_center(label);
         lv_obj_add_event_cb(btn, [](lv_event_t *e) {
             currentEntry += String(lv_label_get_text(lv_obj_get_child(lv_event_get_target(e), 0)));
+            delay(100);
             createConfirmScreen();
         }, LV_EVENT_CLICKED, NULL);
     }
 }
 
 void createConfirmScreen() {
-    if (confirmScreen) lv_obj_clean(confirmScreen);
-    else {
-        confirmScreen = lv_obj_create(NULL);
-        lv_obj_add_style(confirmScreen, &style_screen, 0);
+    if (confirmScreen) {
+        DEBUG_PRINT("Cleaning existing confirm screen");
+        lv_obj_del(confirmScreen);
+        confirmScreen = nullptr;
     }
+    confirmScreen = lv_obj_create(NULL);
+    lv_obj_add_style(confirmScreen, &style_screen, 0);
     lv_scr_load(confirmScreen);
-    addWifiIndicator(confirmScreen);  // Add WiFi indicator
+    DEBUG_PRINTF("Confirm screen created: %p\n", confirmScreen);
+    addWifiIndicator(confirmScreen);
 
-    // Header
     lv_obj_t *header = lv_obj_create(confirmScreen);
     lv_obj_set_size(header, 320, 50);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x333333), 0);
@@ -651,7 +1108,6 @@ void createConfirmScreen() {
     lv_obj_add_style(title, &style_title, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
 
-    // Entry preview
     lv_obj_t *preview = lv_label_create(confirmScreen);
     lv_label_set_text(preview, getFormattedEntry(currentEntry).c_str());
     lv_obj_add_style(preview, &style_text, 0);
@@ -660,7 +1116,6 @@ void createConfirmScreen() {
     lv_obj_set_style_bg_color(preview, lv_color_hex(0x4A4A4A), 0);
     lv_obj_set_style_pad_all(preview, 10, 0);
 
-    // Buttons container
     lv_obj_t *btn_container = lv_obj_create(confirmScreen);
     lv_obj_remove_style_all(btn_container);
     lv_obj_set_size(btn_container, 320, 50);
@@ -668,7 +1123,6 @@ void createConfirmScreen() {
     lv_obj_set_flex_flow(btn_container, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(btn_container, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Confirm button
     lv_obj_t *btn_confirm = lv_btn_create(btn_container);
     lv_obj_set_size(btn_confirm, 130, 40);
     lv_obj_add_style(btn_confirm, &style_btn, 0);
@@ -677,20 +1131,12 @@ void createConfirmScreen() {
     lv_label_set_text(label_confirm, "Confirm");
     lv_obj_center(label_confirm);
     lv_obj_add_event_cb(btn_confirm, [](lv_event_t *e) {
-        // Save the entry
         saveEntry(getFormattedEntry(currentEntry));
-        
-        // Clear the current entry
         currentEntry = "";
-        
-        // Add a small delay before screen transition
         delay(100);
-        
-        // Return to main menu
         createMainMenu();
     }, LV_EVENT_CLICKED, NULL);
 
-    // Cancel button
     lv_obj_t *btn_cancel = lv_btn_create(btn_container);
     lv_obj_set_size(btn_cancel, 130, 40);
     lv_obj_add_style(btn_cancel, &style_btn, 0);
@@ -700,194 +1146,253 @@ void createConfirmScreen() {
     lv_obj_center(label_cancel);
     lv_obj_add_event_cb(btn_cancel, [](lv_event_t *e) {
         currentEntry = "";
+        delay(100);
         createMainMenu();
     }, LV_EVENT_CLICKED, NULL);
 }
 
-void scanWifiCallback(lv_event_t *e) {
-    lv_obj_t *list_cont = (lv_obj_t*)lv_event_get_user_data(e);
-    lv_obj_clean(list_cont);
-
-    lv_obj_t *loading = lv_label_create(list_cont);
-    lv_label_set_text(loading, "Scanning...");
-    lv_obj_add_style(loading, &style_text, 0);
-    lv_obj_align(loading, LV_ALIGN_CENTER, 0, 0);
-
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
-    delay(100);
+void scanNetworks() {
+    if (wifi_status_label) {
+        lv_label_set_text(wifi_status_label, "Scanning for networks...");
+    }
+    
     int n = WiFi.scanNetworks();
-    lv_obj_del(loading);
-
-    numNetworks = (n > 0) ? min(n, MAX_NETWORKS) : 0;
-    if (numNetworks == 0) {
-        lv_obj_t *no_networks = lv_label_create(list_cont);
-        lv_label_set_text(no_networks, "No networks found");
-        lv_obj_add_style(no_networks, &style_text, 0);
-        lv_obj_set_width(no_networks, lv_pct(100));
-        lv_obj_set_style_text_align(no_networks, LV_TEXT_ALIGN_CENTER, 0);
-    } else {
-        for (int i = 0; i < numNetworks; i++) {
-            strncpy(savedSSIDs[i], WiFi.SSID(i).c_str(), 31);
-            savedSSIDs[i][31] = '\0';
-            lv_obj_t *btn = lv_btn_create(list_cont);
-            lv_obj_set_width(btn, lv_pct(100));
-            lv_obj_set_height(btn, 40);
-            lv_obj_add_style(btn, &style_btn, 0);
-            lv_obj_add_style(btn, &style_btn_pressed, LV_STATE_PRESSED);
-            lv_obj_t *ssid_label = lv_label_create(btn);
-            lv_label_set_text(ssid_label, savedSSIDs[i]);
-            lv_obj_add_style(ssid_label, &style_text, 0);
-            lv_obj_align(ssid_label, LV_ALIGN_LEFT_MID, 5, 0);
-            lv_obj_add_event_cb(btn, wifiButtonCallback, LV_EVENT_CLICKED, (void*)i);
-            Serial.printf("Added network button %d: %s, Parent: %p\n", i, savedSSIDs[i], lv_obj_get_parent(btn));
+    DEBUG_PRINTF("Found %d networks\n", n);
+    
+    if (wifi_list) {
+        lv_obj_clean(wifi_list);
+        
+        if (n == 0) {
+            lv_label_set_text(wifi_status_label, "No networks found");
+        } else {
+            lv_label_set_text(wifi_status_label, "Select a network:");
+            
+            for (int i = 0; i < n; ++i) {
+                String ssid = WiFi.SSID(i);
+                int rssi = WiFi.RSSI(i);
+                String security = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "" : " ";
+                
+                // Create list item with SSID and signal strength
+                char list_text[50];
+                snprintf(list_text, sizeof(list_text), "%s (%ddBm)%s", 
+                    ssid.c_str(), rssi, security.c_str());
+                
+                lv_obj_t* btn = lv_list_add_btn(wifi_list, LV_SYMBOL_WIFI, list_text);
+                lv_obj_add_style(btn, &style_btn, 0);
+                lv_obj_add_style(btn, &style_btn_pressed, LV_STATE_PRESSED);
+                
+                // Store SSID in user data
+                char* btn_ssid = (char*)lv_mem_alloc(33);
+                strncpy(btn_ssid, ssid.c_str(), 32);
+                btn_ssid[32] = '\0';
+                lv_obj_set_user_data(btn, btn_ssid);
+                
+                // Add click event
+                lv_obj_add_event_cb(btn, [](lv_event_t* e) {
+                    lv_obj_t* btn = lv_event_get_target(e);
+                    char* ssid = (char*)lv_obj_get_user_data(btn);
+                    if (ssid) {
+                        strncpy(selected_ssid, ssid, 32);
+                        selected_ssid[32] = '\0';
+                        DEBUG_PRINTF("Selected SSID: %s\n", selected_ssid);
+                        showWiFiKeyboard();
+                    }
+                }, LV_EVENT_CLICKED, NULL);
+            }
         }
     }
-    WiFi.scanDelete();
-    lv_obj_invalidate(list_cont);
-    lv_refr_now(NULL);
-    Serial.printf("List content height: %d, Scroll position: %d\n", lv_obj_get_content_height(list_cont), lv_obj_get_scroll_y(list_cont));
-    Serial.printf("Free heap after scan: %u bytes\n", ESP.getFreeHeap());
 }
 
-void createWifiSettingsScreen() {
-    if (wifiSettingsScreen) lv_obj_clean(wifiSettingsScreen);
-    else {
-        wifiSettingsScreen = lv_obj_create(NULL);
-        lv_obj_add_style(wifiSettingsScreen, &style_screen, 0);
+void showWiFiKeyboard() {
+    if (wifi_keyboard == nullptr) {
+        // Reset keyboard page index
+        keyboard_page_index = 0;
+        
+        // Create keyboard container
+        wifi_keyboard = lv_obj_create(wifi_screen);
+        lv_obj_set_size(wifi_keyboard, 320, 240);
+        lv_obj_align(wifi_keyboard, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_set_style_bg_color(wifi_keyboard, lv_color_hex(0x1E1E1E), 0);
+        
+        // Add header
+        lv_obj_t* header = lv_obj_create(wifi_keyboard);
+        lv_obj_set_size(header, 320, 30);
+        lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
+        lv_obj_set_style_bg_color(header, lv_color_hex(0x333333), 0);
+        
+        lv_obj_t* header_label = lv_label_create(header);
+        lv_label_set_text(header_label, "Enter WiFi Password");
+        lv_obj_align(header_label, LV_ALIGN_CENTER, 0, 0);
+        
+        // Add password text area
+        lv_obj_t* ta = lv_textarea_create(wifi_keyboard);
+        lv_obj_set_size(ta, 280, 30);
+        lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 40);
+        lv_textarea_set_password_mode(ta, true);
+        lv_textarea_set_max_length(ta, 64);
+        lv_textarea_set_placeholder_text(ta, "Password");
+        lv_obj_add_event_cb(ta, [](lv_event_t* e) {
+            lv_obj_t* ta = lv_event_get_target(e);
+            const char* password = lv_textarea_get_text(ta);
+            strncpy(wifi_password, password, 64);
+            wifi_password[64] = '\0';
+        }, LV_EVENT_VALUE_CHANGED, NULL);
+        
+        // Add page indicator
+        lv_obj_t* page_indicator = lv_label_create(wifi_keyboard);
+        lv_obj_align(page_indicator, LV_ALIGN_TOP_MID, 0, 75);
+        lv_label_set_text(page_indicator, "Page: abc");
+        
+        // Add cancel button
+        lv_obj_t* cancel_btn = lv_btn_create(wifi_keyboard);
+        lv_obj_align(cancel_btn, LV_ALIGN_TOP_LEFT, 10, 100);
+        lv_obj_set_size(cancel_btn, 100, 35);
+        lv_obj_add_style(cancel_btn, &style_btn, 0);
+        lv_obj_add_style(cancel_btn, &style_btn_pressed, LV_STATE_PRESSED);
+        
+        lv_obj_t* cancel_label = lv_label_create(cancel_btn);
+        lv_label_set_text(cancel_label, "Cancel");
+        lv_obj_center(cancel_label);
+        
+        // Add connect button
+        lv_obj_t* connect_btn = lv_btn_create(wifi_keyboard);
+        lv_obj_align(connect_btn, LV_ALIGN_TOP_RIGHT, -10, 100);
+        lv_obj_set_size(connect_btn, 100, 35);
+        lv_obj_add_style(connect_btn, &style_btn, 0);
+        lv_obj_add_style(connect_btn, &style_btn_pressed, LV_STATE_PRESSED);
+        
+        lv_obj_t* connect_label = lv_label_create(connect_btn);
+        lv_label_set_text(connect_label, "Connect");
+        lv_obj_center(connect_label);
+        
+        // Create the paged keyboard
+        lv_obj_t* kb = lv_keyboard_create(wifi_keyboard);
+        lv_obj_set_size(kb, 300, 90);
+        lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, -10);
+        lv_keyboard_set_textarea(kb, ta);
+        
+        // Set custom keyboard map
+        lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_LOWER, keyboard_maps[keyboard_page_index], keyboard_ctrl_map);
+        
+        // Remove default event handler and add custom one
+        lv_obj_remove_event_cb(kb, lv_keyboard_def_event_cb);
+        lv_obj_add_event_cb(kb, wifi_keyboard_event_cb, LV_EVENT_VALUE_CHANGED, page_indicator);
+        lv_obj_add_event_cb(kb, lv_keyboard_def_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        
+        // Increase spacing between keys
+        lv_obj_set_style_pad_row(kb, 8, 0);
+        lv_obj_set_style_pad_column(kb, 8, 0);
+        
+        // Add event callbacks
+        lv_obj_add_event_cb(connect_btn, [](lv_event_t* e) {
+            connectToWiFi();
+        }, LV_EVENT_CLICKED, NULL);
+        
+        lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
+            if (wifi_keyboard) {
+                lv_obj_del(wifi_keyboard);
+                wifi_keyboard = nullptr;
+            }
+        }, LV_EVENT_CLICKED, NULL);
     }
-    lv_scr_load(wifiSettingsScreen);
-    addWifiIndicator(wifiSettingsScreen);  // Add WiFi indicator
+}
 
-    cloudPaused = true;
+void connectToWiFi() {
+    if (strlen(selected_ssid) > 0 && strlen(wifi_password) > 0) {
+        DEBUG_PRINTF("Connecting to %s\n", selected_ssid);
+        lv_label_set_text(wifi_status_label, "Connecting...");
+        
+        WiFi.begin(selected_ssid, wifi_password);
+        int attempts = 0;
+        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+            delay(500);
+            attempts++;
+        }
+        
+        if (WiFi.status() == WL_CONNECTED) {
+            DEBUG_PRINTF("Connected to WiFi. IP: %s\n", WiFi.localIP().toString().c_str());
+            lv_label_set_text(wifi_status_label, "Connected!");
+            
+            // Save credentials to preferences
+            preferences.begin("wifi", false);
+            preferences.putString("ssid", selected_ssid);
+            preferences.putString("password", wifi_password);
+            preferences.end();
+            
+            // Clean up keyboard
+            if (wifi_keyboard) {
+                lv_obj_del(wifi_keyboard);
+                wifi_keyboard = nullptr;
+            }
+        } else {
+            lv_label_set_text(wifi_status_label, "Connection failed");
+            WiFi.disconnect();
+        }
+    }
+}
 
-    // Header
-    lv_obj_t *header = lv_obj_create(wifiSettingsScreen);
+void createWiFiScreen() {
+    if (wifi_screen) {
+        lv_obj_del(wifi_screen);
+    }
+    
+    wifi_screen = lv_obj_create(NULL);
+    lv_obj_add_style(wifi_screen, &style_screen, 0);
+    
+    // Add header
+    lv_obj_t* header = lv_obj_create(wifi_screen);
     lv_obj_set_size(header, 320, 50);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x333333), 0);
-    lv_obj_t *title = lv_label_create(header);
-    lv_label_set_text(title, "Wi-Fi Settings");
+    
+    lv_obj_t* title = lv_label_create(header);
+    lv_label_set_text(title, "WiFi Setup");
     lv_obj_add_style(title, &style_title, 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
-
-    // Status
-    lv_obj_t *status = lv_label_create(wifiSettingsScreen);
-    String wifi_text = "Status: " + String(WiFi.status() == WL_CONNECTED ? WiFi.SSID() : "Not Connected");
-    lv_label_set_text(status, wifi_text.c_str());
-    lv_obj_add_style(status, &style_text, 0);
-    lv_obj_align(status, LV_ALIGN_TOP_MID, 0, 60);
-
-    // Network list
-    lv_obj_t *list_cont = lv_obj_create(wifiSettingsScreen);
-    lv_obj_set_size(list_cont, 280, 140);
-    lv_obj_align(list_cont, LV_ALIGN_TOP_MID, 0, 90);
-    lv_obj_set_style_bg_color(list_cont, lv_color_hex(0x4A4A4A), 0);
-    lv_obj_set_flex_flow(list_cont, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_scrollbar_mode(list_cont, LV_SCROLLBAR_MODE_ACTIVE);
-    lv_obj_add_flag(list_cont, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Scan button
-    lv_obj_t *scan_btn = lv_btn_create(wifiSettingsScreen);
-    lv_obj_set_size(scan_btn, 130, 40);
-    lv_obj_align(scan_btn, LV_ALIGN_BOTTOM_LEFT, 20, -10);
-    lv_obj_add_style(scan_btn, &style_btn, 0);
-    lv_obj_add_style(scan_btn, &style_btn_pressed, LV_STATE_PRESSED);
-    lv_obj_t *scan_label = lv_label_create(scan_btn);
-    lv_label_set_text(scan_label, "Scan");
-    lv_obj_center(scan_label);
-    lv_obj_add_event_cb(scan_btn, scanWifiCallback, LV_EVENT_CLICKED, list_cont);
-
-    // Disconnect button
-    lv_obj_t *disconnect_btn = lv_btn_create(wifiSettingsScreen);
-    lv_obj_set_size(disconnect_btn, 130, 40);
-    lv_obj_align(disconnect_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_add_style(disconnect_btn, &style_btn, 0);
-    lv_obj_add_style(disconnect_btn, &style_btn_pressed, LV_STATE_PRESSED);
-    lv_obj_t *disconnect_label = lv_label_create(disconnect_btn);
-    lv_label_set_text(disconnect_label, "Disconnect");
-    lv_obj_center(disconnect_label);
-    lv_obj_add_event_cb(disconnect_btn, disconnectWifi, LV_EVENT_CLICKED, NULL);
-
-    // Back button
-    lv_obj_t *back_btn = lv_btn_create(wifiSettingsScreen);
-    lv_obj_set_size(back_btn, 130, 40);
-    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_RIGHT, -20, -10);
+    
+    // Add status label
+    wifi_status_label = lv_label_create(wifi_screen);
+    lv_obj_align(wifi_status_label, LV_ALIGN_TOP_MID, 0, 60);
+    lv_label_set_text(wifi_status_label, "Initializing...");
+    
+    // Add network list
+    wifi_list = lv_list_create(wifi_screen);
+    lv_obj_set_size(wifi_list, 300, 160);
+    lv_obj_align(wifi_list, LV_ALIGN_TOP_MID, 0, 80);
+    lv_obj_set_style_bg_color(wifi_list, lv_color_hex(0x2D2D2D), 0);
+    
+    // Add refresh button
+    lv_obj_t* refresh_btn = lv_btn_create(wifi_screen);
+    lv_obj_align(refresh_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+    lv_obj_set_size(refresh_btn, 100, 40);
+    lv_obj_add_style(refresh_btn, &style_btn, 0);
+    lv_obj_add_style(refresh_btn, &style_btn_pressed, LV_STATE_PRESSED);
+    
+    lv_obj_t* refresh_label = lv_label_create(refresh_btn);
+    lv_label_set_text(refresh_label, LV_SYMBOL_REFRESH " Scan");
+    lv_obj_center(refresh_label);
+    
+    lv_obj_add_event_cb(refresh_btn, [](lv_event_t* e) {
+        scanNetworks();
+    }, LV_EVENT_CLICKED, NULL);
+    
+    // Add back button
+    lv_obj_t* back_btn = lv_btn_create(wifi_screen);
+    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_LEFT, 10, -10);
+    lv_obj_set_size(back_btn, 100, 40);
     lv_obj_add_style(back_btn, &style_btn, 0);
     lv_obj_add_style(back_btn, &style_btn_pressed, LV_STATE_PRESSED);
-    lv_obj_t *back_label = lv_label_create(back_btn);
-    lv_label_set_text(back_label, "Back");
+    
+    lv_obj_t* back_label = lv_label_create(back_btn);
+    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
     lv_obj_center(back_label);
-    lv_obj_add_event_cb(back_btn, [](lv_event_t *e) {
-        cloudPaused = false;
-        lv_scr_load(mainScreen);
+    
+    lv_obj_add_event_cb(back_btn, [](lv_event_t* e) {
+        createMainMenu();
     }, LV_EVENT_CLICKED, NULL);
-
-    lv_scr_load(wifiSettingsScreen);
-    Serial.printf("Free heap after WiFi settings: %u bytes\n", ESP.getFreeHeap());
-}
-
-// Struct to hold connection data
-struct ConnectData {
-    int idx;
-    lv_obj_t *ta;
-    lv_obj_t *modal;
-};
-
-// Callback function for connecting to Wi-Fi
-void connectWifiCallback(lv_event_t *e) {
-    ConnectData *data = (ConnectData*)lv_event_get_user_data(e);
-    const char* password = lv_textarea_get_text(data->ta);
-    WiFi.begin(savedSSIDs[data->idx], password);
-    int timeout = 10000;
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < timeout) {
-        delay(500);
-    }
-    lv_obj_del(data->modal);
-    cloudPaused = false;
-    createWifiSettingsScreen();
-    delete data;
-}
-
-void wifiButtonCallback(lv_event_t *e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
-        int idx = (int)lv_event_get_user_data(e);
-        if (idx >= 0 && idx < numNetworks) {
-            lv_obj_t *modal = lv_obj_create(lv_scr_act());
-            lv_obj_set_size(modal, 300, 200);
-            lv_obj_center(modal);
-            lv_obj_set_style_bg_color(modal, lv_color_hex(0x4A4A4A), 0);
-            lv_obj_set_style_border_color(modal, lv_color_hex(0xFFFFFF), 0);
-            lv_obj_set_style_border_width(modal, 2, 0);
-
-            lv_obj_t *title = lv_label_create(modal);
-            lv_label_set_text(title, "Enter Password");
-            lv_obj_add_style(title, &style_title, 0);
-            lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
-
-            lv_obj_t *ta = lv_textarea_create(modal);
-            lv_obj_set_size(ta, 260, 40);
-            lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 50);
-            lv_textarea_set_password_mode(ta, true);
-
-            lv_obj_t *kb = lv_keyboard_create(modal);
-            lv_obj_set_size(kb, 300, 100);
-            lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
-            lv_keyboard_set_textarea(kb, ta);
-
-            lv_obj_t *connect_btn = lv_btn_create(modal);
-            lv_obj_set_size(connect_btn, 100, 40);
-            lv_obj_align(connect_btn, LV_ALIGN_TOP_MID, 0, 100);
-            lv_obj_add_style(connect_btn, &style_btn, 0);
-            lv_obj_add_style(connect_btn, &style_btn_pressed, LV_STATE_PRESSED);
-            lv_obj_t *connect_label = lv_label_create(connect_btn);
-            lv_label_set_text(connect_label, "Connect");
-            lv_obj_center(connect_label);
-
-            ConnectData *data = new ConnectData{idx, ta, modal};
-            lv_obj_add_event_cb(connect_btn, connectWifiCallback, LV_EVENT_CLICKED, data);
-        }
-    }
+    
+    // Load screen and start scan
+    lv_scr_load(wifi_screen);
+    scanNetworks();
 }
 
 String getFormattedEntry(const String& entry) {
@@ -924,19 +1429,75 @@ String getTimestamp() {
 }
 
 void saveEntry(const String& entry) {
-    // Save to logEntry variable
     logEntry = entry;
-    
-    // Log to Serial for debugging
     Serial.println("New Entry:");
     Serial.println(entry);
-    
-    // Try to send to cloud if connected
     if (WiFi.status() == WL_CONNECTED && ArduinoCloud.connected()) {
         Serial.println("Sending to Arduino Cloud...");
-        // Add a small delay to ensure proper handling
         delay(100);
     } else {
         Serial.println("Cloud not connected, logged locally only");
+    }
+}
+
+// Custom keyboard event handler
+static void wifi_keyboard_event_cb(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_obj_t *kb = lv_event_get_target(e);
+    lv_obj_t *page_indicator = (lv_obj_t *)lv_event_get_user_data(e);
+    
+    if (code == LV_EVENT_VALUE_CHANGED) {
+        uint16_t btn_id = lv_keyboard_get_selected_btn(kb);
+        const char *txt = lv_keyboard_get_btn_text(kb, btn_id);
+        
+        if (txt) {
+            if (strcmp(txt, LV_SYMBOL_RIGHT) == 0) {
+                // Move to next keyboard page
+                keyboard_page_index = (keyboard_page_index + 1) % NUM_KEYBOARD_PAGES;
+                lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_LOWER, keyboard_maps[keyboard_page_index], keyboard_ctrl_map);
+                
+                // Update page indicator
+                if (page_indicator) {
+                    const char* page_name;
+                    switch (keyboard_page_index) {
+                        case 0: page_name = "abc"; break;
+                        case 1: page_name = "ABC"; break;
+                        case 2: page_name = "123"; break;
+                        case 3: page_name = "#+="; break;
+                        default: page_name = "abc";
+                    }
+                    char buffer[20];
+                    snprintf(buffer, sizeof(buffer), "Page: %s", page_name);
+                    lv_label_set_text(page_indicator, buffer);
+                }
+                
+                lv_event_stop_processing(e);
+            } else if (strcmp(txt, LV_SYMBOL_LEFT) == 0) {
+                // Move to previous keyboard page
+                keyboard_page_index = (keyboard_page_index - 1 + NUM_KEYBOARD_PAGES) % NUM_KEYBOARD_PAGES;
+                lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_TEXT_LOWER, keyboard_maps[keyboard_page_index], keyboard_ctrl_map);
+                
+                // Update page indicator
+                if (page_indicator) {
+                    const char* page_name;
+                    switch (keyboard_page_index) {
+                        case 0: page_name = "abc"; break;
+                        case 1: page_name = "ABC"; break;
+                        case 2: page_name = "123"; break;
+                        case 3: page_name = "#+="; break;
+                        default: page_name = "abc";
+                    }
+                    char buffer[20];
+                    snprintf(buffer, sizeof(buffer), "Page: %s", page_name);
+                    lv_label_set_text(page_indicator, buffer);
+                }
+                
+                lv_event_stop_processing(e);
+            } else if (strcmp(txt, LV_SYMBOL_OK) == 0) {
+                // Connect to WiFi when OK is pressed
+                connectToWiFi();
+                lv_event_stop_processing(e);
+            }
+        }
     }
 }
