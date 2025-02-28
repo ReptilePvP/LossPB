@@ -95,6 +95,8 @@ static Preferences preferences;
 
 // Styles
 static lv_style_t style_screen, style_btn, style_btn_pressed, style_title, style_text;
+// Add this new style for keyboard buttons
+static lv_style_t style_keyboard_btn;
 
 // Add these global variables and keyboard definitions
 static int keyboard_page_index = 0;
@@ -105,8 +107,8 @@ const lv_btnmatrix_ctrl_t keyboard_ctrl_map[] = {
     4, 4, 4, 
     4, 4, 4, 
     4, 4, 4,
-    3, 3, 3, 3 
-   };
+    3, 7, 7, 7  // Changed last row controls for special keys
+};
 
 // Keyboard maps for different pages
 const char *keyboard_maps[][23] = {
@@ -171,6 +173,15 @@ void initStyles() {
     lv_style_init(&style_text);
     lv_style_set_text_color(&style_text, lv_color_hex(0xFFFFFF));
     lv_style_set_text_font(&style_text, &lv_font_montserrat_14);
+    
+    // Initialize keyboard button style
+    lv_style_init(&style_keyboard_btn);
+    lv_style_set_radius(&style_keyboard_btn, 8);  // Rounded corners
+    lv_style_set_border_width(&style_keyboard_btn, 2);  // Border width
+    lv_style_set_border_color(&style_keyboard_btn, lv_color_hex(0x888888));  // Border color
+    lv_style_set_pad_all(&style_keyboard_btn, 5);  // Inner padding inside the button
+    lv_style_set_bg_color(&style_keyboard_btn, lv_color_hex(0x333333));  // Button background color
+    lv_style_set_text_color(&style_keyboard_btn, lv_color_hex(0xFFFFFF));  // Text color
 }
 
 WiFiConnectionHandler ArduinoIoTPreferredConnection(SSID, PASS);
@@ -1129,8 +1140,18 @@ void scanNetworks() {
         lv_label_set_text(wifi_status_label, "Scanning for networks...");
     }
     
+    // Add a spinner while scanning
+    lv_obj_t* spinner = lv_spinner_create(wifi_screen, 1000, 60);
+    lv_obj_set_size(spinner, 40, 40);
+    lv_obj_align(spinner, LV_ALIGN_TOP_RIGHT, -10, 10);
+    
+    lv_timer_handler(); // Force UI update
+    
     int n = WiFi.scanNetworks();
     DEBUG_PRINTF("Found %d networks\n", n);
+    
+    // Remove spinner
+    lv_obj_del(spinner);
     
     if (wifi_list) {
         lv_obj_clean(wifi_list);
@@ -1143,16 +1164,33 @@ void scanNetworks() {
             for (int i = 0; i < n; ++i) {
                 String ssid = WiFi.SSID(i);
                 int rssi = WiFi.RSSI(i);
-                String security = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "" : " ";
+                
+                // Create signal strength indicator based on RSSI
+                String signal_indicator;
+                if (rssi > -60) {
+                    signal_indicator = "●●●";
+                } else if (rssi > -70) {
+                    signal_indicator = "●●○";
+                } else {
+                    signal_indicator = "●○○";
+                }
+                
+                // Security indicator
+                String security = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "" : "*";
                 
                 // Create list item with SSID and signal strength
                 char list_text[50];
-                snprintf(list_text, sizeof(list_text), "%s (%ddBm)%s", 
-                    ssid.c_str(), rssi, security.c_str());
+                snprintf(list_text, sizeof(list_text), "%s %s %s", 
+                    ssid.c_str(), signal_indicator.c_str(), security.c_str());
                 
                 lv_obj_t* btn = lv_list_add_btn(wifi_list, LV_SYMBOL_WIFI, list_text);
                 lv_obj_add_style(btn, &style_btn, 0);
                 lv_obj_add_style(btn, &style_btn_pressed, LV_STATE_PRESSED);
+                
+                // Highlight the currently selected network
+                if (strcmp(selected_ssid, ssid.c_str()) == 0) {
+                    lv_obj_set_style_bg_color(btn, lv_color_hex(0x3E6E6E), 0); // Teal highlight
+                }
                 
                 // Store SSID in user data
                 char* btn_ssid = (char*)lv_mem_alloc(33);
@@ -1168,6 +1206,11 @@ void scanNetworks() {
                         strncpy(selected_ssid, ssid, 32);
                         selected_ssid[32] = '\0';
                         DEBUG_PRINTF("Selected SSID: %s\n", selected_ssid);
+                        
+                        // Refresh the list to show the selected network
+                        scanNetworks();
+                        
+                        // Show keyboard after selection is updated
                         showWiFiKeyboard();
                     }
                 }, LV_EVENT_CLICKED, NULL);
@@ -1191,7 +1234,7 @@ void showWiFiKeyboard() {
         // Add password text area
         lv_obj_t* ta = lv_textarea_create(wifi_keyboard);
         lv_obj_set_size(ta, 260, 40);
-        lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 20);
+        lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 15);
         lv_textarea_set_password_mode(ta, true);
         lv_textarea_set_max_length(ta, 64);
         lv_textarea_set_placeholder_text(ta, "Password");
@@ -1213,22 +1256,116 @@ void showWiFiKeyboard() {
         lv_label_set_text(close_label, LV_SYMBOL_CLOSE);
         lv_obj_center(close_label);
         
-        // Create the keyboard
-        lv_obj_t* kb = lv_keyboard_create(wifi_keyboard);
-        lv_obj_set_size(kb, 300, 160);
-        lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, -10);
+        // Create a custom button matrix instead of keyboard
+        lv_obj_t* kb = lv_btnmatrix_create(wifi_keyboard);
+        lv_obj_set_size(kb, 300, 150);
+        lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, -5);
         
-        // Set custom keyboard map first, then textarea
-        lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_USER_1);
-        lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_USER_1, keyboard_maps[keyboard_page_index], keyboard_ctrl_map);
-        lv_keyboard_set_textarea(kb, ta);
+        // Set map and control map
+        lv_btnmatrix_set_map(kb, keyboard_maps[keyboard_page_index]);
+        lv_btnmatrix_set_ctrl_map(kb, keyboard_ctrl_map);
         
-        // Add only our custom event handler
-        lv_obj_add_event_cb(kb, wifi_keyboard_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        // Add event handler for the button matrix
+        lv_obj_add_event_cb(kb, [](lv_event_t* e) {
+            lv_event_code_t code = lv_event_get_code(e);
+            lv_obj_t* btnm = lv_event_get_target(e);
+            
+            if (code == LV_EVENT_VALUE_CHANGED) {
+                uint32_t btn_id = lv_btnmatrix_get_selected_btn(btnm);
+                const char* txt = lv_btnmatrix_get_btn_text(btnm, btn_id);
+                
+                if (txt) {
+                    DEBUG_PRINTF("Button matrix pressed: %s\n", txt);
+                    
+                    if (strcmp(txt, LV_SYMBOL_RIGHT) == 0) {
+                        // Move to next keyboard page
+                        keyboard_page_index = (keyboard_page_index + 1) % NUM_KEYBOARD_PAGES;
+                        DEBUG_PRINTF("Changing to keyboard page: %d\n", keyboard_page_index);
+                        lv_btnmatrix_set_map(btnm, keyboard_maps[keyboard_page_index]);
+                    } else if (strcmp(txt, LV_SYMBOL_LEFT) == 0) {
+                        // Move to previous keyboard page
+                        keyboard_page_index = (keyboard_page_index - 1 + NUM_KEYBOARD_PAGES) % NUM_KEYBOARD_PAGES;
+                        DEBUG_PRINTF("Changing to keyboard page: %d\n", keyboard_page_index);
+                        lv_btnmatrix_set_map(btnm, keyboard_maps[keyboard_page_index]);
+                    } else if (strcmp(txt, LV_SYMBOL_BACKSPACE) == 0) {
+                        // Handle backspace
+                        lv_obj_t* ta = lv_obj_get_child(wifi_keyboard, 0);
+                        if (ta && lv_obj_check_type(ta, &lv_textarea_class)) {
+                            lv_textarea_del_char(ta);
+                        }
+                    } else if (strcmp(txt, LV_SYMBOL_OK) == 0) {
+                        // Hide keyboard and show connect/cancel buttons
+                        if (wifi_keyboard) {
+                            // Delete the keyboard but keep the container
+                            lv_obj_clean(wifi_keyboard);
+                            
+                            // Add a label showing the password (as asterisks)
+                            lv_obj_t* pwd_label = lv_label_create(wifi_keyboard);
+                            lv_obj_align(pwd_label, LV_ALIGN_TOP_MID, 0, 30);
+                            
+                            char asterisks[65] = {0};
+                            size_t len = strlen(wifi_password);
+                            if (len > 64) len = 64;
+                            for (size_t i = 0; i < len; i++) {
+                                asterisks[i] = '*';
+                            }
+                            asterisks[len] = '\0';
+                            
+                            char buffer[100];
+                            snprintf(buffer, sizeof(buffer), "Password: %s", asterisks);
+                            lv_label_set_text(pwd_label, buffer);
+                            
+                            // Add connect button
+                            lv_obj_t* connect_btn = lv_btn_create(wifi_keyboard);
+                            lv_obj_set_size(connect_btn, 140, 50);
+                            lv_obj_align(connect_btn, LV_ALIGN_CENTER, -75, 50);
+                            lv_obj_add_style(connect_btn, &style_btn, 0);
+                            lv_obj_add_style(connect_btn, &style_btn_pressed, LV_STATE_PRESSED);
+                            
+                            lv_obj_t* connect_label = lv_label_create(connect_btn);
+                            lv_label_set_text(connect_label, "Connect");
+                            lv_obj_center(connect_label);
+                            
+                            // Add cancel button
+                            lv_obj_t* cancel_btn = lv_btn_create(wifi_keyboard);
+                            lv_obj_set_size(cancel_btn, 140, 50);
+                            lv_obj_align(cancel_btn, LV_ALIGN_CENTER, 75, 50);
+                            lv_obj_add_style(cancel_btn, &style_btn, 0);
+                            lv_obj_add_style(cancel_btn, &style_btn_pressed, LV_STATE_PRESSED);
+                            
+                            lv_obj_t* cancel_label = lv_label_create(cancel_btn);
+                            lv_label_set_text(cancel_label, "Cancel");
+                            lv_obj_center(cancel_label);
+                            
+                            // Add event callbacks
+                            lv_obj_add_event_cb(connect_btn, [](lv_event_t* e) {
+                                connectToWiFi();
+                            }, LV_EVENT_CLICKED, NULL);
+                            
+                            lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
+                                if (wifi_keyboard) {
+                                    lv_obj_del(wifi_keyboard);
+                                    wifi_keyboard = nullptr;
+                                }
+                            }, LV_EVENT_CLICKED, NULL);
+                        }
+                    } else {
+                        // Regular key, add to textarea
+                        lv_obj_t* ta = lv_obj_get_child(wifi_keyboard, 0);
+                        if (ta && lv_obj_check_type(ta, &lv_textarea_class)) {
+                            lv_textarea_add_text(ta, txt);
+                        }
+                    }
+                }
+            }
+        }, LV_EVENT_VALUE_CHANGED, NULL);
         
         // Increase spacing between keys
-        lv_obj_set_style_pad_row(kb, 10, 0);
-        lv_obj_set_style_pad_column(kb, 10, 0);
+        lv_obj_set_style_pad_row(kb, 15, 0);     
+        lv_obj_set_style_pad_column(kb, 15, 0);  
+        
+        // Add border to keyboard buttons
+        lv_obj_add_style(kb, &style_keyboard_btn, LV_PART_ITEMS);
         
         // Add event callback for close button
         lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
@@ -1241,36 +1378,80 @@ void showWiFiKeyboard() {
 }
 
 void connectToWiFi() {
-    if (strlen(selected_ssid) > 0 && strlen(wifi_password) > 0) {
-        DEBUG_PRINTF("Connecting to %s\n", selected_ssid);
-        lv_label_set_text(wifi_status_label, "Connecting...");
+    if (strlen(wifi_password) < 1) {
+        Serial.println("Password too short");
+        return;
+    }
+    
+    // Create a loading indicator
+    lv_obj_t* loading_container = lv_obj_create(wifi_screen);
+    lv_obj_set_size(loading_container, 200, 150);
+    lv_obj_align(loading_container, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(loading_container, lv_color_hex(0x1E1E1E), 0);
+    lv_obj_set_style_border_width(loading_container, 2, 0);
+    lv_obj_set_style_border_color(loading_container, lv_color_hex(0x555555), 0);
+    
+    // Add a spinner
+    lv_obj_t* spinner = lv_spinner_create(loading_container, 1000, 60);
+    lv_obj_set_size(spinner, 80, 80);
+    lv_obj_align(spinner, LV_ALIGN_TOP_MID, 0, 15);
+    
+    // Add connecting text
+    lv_obj_t* connect_label = lv_label_create(loading_container);
+    lv_label_set_text(connect_label, "Connecting to WiFi...");
+    lv_obj_align(connect_label, LV_ALIGN_BOTTOM_MID, 0, -15);
+    
+    // Force UI update
+    lv_timer_handler();
+    
+    // Close the keyboard dialog if open
+    if (wifi_keyboard) {
+        lv_obj_del(wifi_keyboard);
+        wifi_keyboard = nullptr;
+    }
+    
+    // Try to connect
+    Serial.println("Connecting to WiFi...");
+    Serial.printf("SSID: %s, Password: %s\n", selected_ssid, wifi_password);
+    
+    WiFi.begin(selected_ssid, wifi_password);
+    
+    int attempt = 0;
+    while (WiFi.status() != WL_CONNECTED && attempt < 20) {
+        delay(500);
+        Serial.print(".");
+        lv_timer_handler();
+        attempt++;
+    }
+    
+    // Remove loading indicator
+    lv_obj_del(loading_container);
+    
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("\nConnected to WiFi!");
+        Serial.print("IP address: ");
+        Serial.println(WiFi.localIP());
         
-        WiFi.begin(selected_ssid, wifi_password);
-        int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-            delay(500);
-            attempts++;
-        }
+        // Save WiFi credentials
+        preferences.begin("wifi", false);
+        preferences.putString("ssid", selected_ssid);
+        preferences.putString("password", wifi_password);
+        preferences.end();
         
-        if (WiFi.status() == WL_CONNECTED) {
-            DEBUG_PRINTF("Connected to WiFi. IP: %s\n", WiFi.localIP().toString().c_str());
-            lv_label_set_text(wifi_status_label, "Connected!");
-            
-            // Save credentials to preferences
-            preferences.begin("wifi", false);
-            preferences.putString("ssid", selected_ssid);
-            preferences.putString("password", wifi_password);
-            preferences.end();
-            
-            // Clean up keyboard
-            if (wifi_keyboard) {
-                lv_obj_del(wifi_keyboard);
-                wifi_keyboard = nullptr;
-            }
-        } else {
-            lv_label_set_text(wifi_status_label, "Connection failed");
-            WiFi.disconnect();
-        }
+        // Update WiFi indicator
+        updateWifiIndicator();
+        
+        // Refresh the network list
+        scanNetworks();
+    } else {
+        Serial.println("\nFailed to connect to WiFi.");
+        
+        // Show error dialog
+        lv_obj_t* error_box = lv_msgbox_create(wifi_screen, "Connection Failed", 
+            "Failed to connect to the WiFi network.\nPlease check your password and try again.", 
+            NULL, true);
+        lv_obj_set_size(error_box, 280, 150);
+        lv_obj_center(error_box);
     }
 }
 
@@ -1380,100 +1561,5 @@ void saveEntry(const String& entry) {
         delay(100);
     } else {
         Serial.println("Cloud not connected, logged locally only");
-    }
-}
-
-// Custom keyboard event handler
-static void wifi_keyboard_event_cb(lv_event_t *e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    lv_obj_t *kb = lv_event_get_target(e);
-    
-    if (code == LV_EVENT_VALUE_CHANGED) {
-        uint16_t btn_id = lv_keyboard_get_selected_btn(kb);
-        const char *txt = lv_keyboard_get_btn_text(kb, btn_id);
-        
-        if (txt) {
-            DEBUG_PRINTF("Keyboard button pressed: %s\n", txt);
-            
-            if (strcmp(txt, LV_SYMBOL_RIGHT) == 0) {
-                // Move to next keyboard page
-                keyboard_page_index = (keyboard_page_index + 1) % NUM_KEYBOARD_PAGES;
-                DEBUG_PRINTF("Changing to keyboard page: %d\n", keyboard_page_index);
-                lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_USER_1, keyboard_maps[keyboard_page_index], keyboard_ctrl_map);
-            } else if (strcmp(txt, LV_SYMBOL_LEFT) == 0) {
-                // Move to previous keyboard page
-                keyboard_page_index = (keyboard_page_index - 1 + NUM_KEYBOARD_PAGES) % NUM_KEYBOARD_PAGES;
-                DEBUG_PRINTF("Changing to keyboard page: %d\n", keyboard_page_index);
-                lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_USER_1, keyboard_maps[keyboard_page_index], keyboard_ctrl_map);
-            } else if (strcmp(txt, LV_SYMBOL_BACKSPACE) == 0) {
-                // Handle backspace manually
-                lv_obj_t *ta = lv_keyboard_get_textarea(kb);
-                if (ta) {
-                    lv_textarea_del_char(ta);
-                }
-            } else if (strcmp(txt, LV_SYMBOL_OK) == 0) {
-                // Hide keyboard and show connect/cancel buttons
-                if (wifi_keyboard) {
-                    // Delete the keyboard but keep the container
-                    lv_obj_clean(wifi_keyboard);
-                    
-                    // Add a label showing the password (as asterisks)
-                    lv_obj_t* pwd_label = lv_label_create(wifi_keyboard);
-                    lv_obj_align(pwd_label, LV_ALIGN_TOP_MID, 0, 30);
-                    
-                    char asterisks[65] = {0};
-                    size_t len = strlen(wifi_password);
-                    if (len > 64) len = 64;
-                    for (size_t i = 0; i < len; i++) {
-                        asterisks[i] = '*';
-                    }
-                    asterisks[len] = '\0';
-                    
-                    char buffer[100];
-                    snprintf(buffer, sizeof(buffer), "Password: %s", asterisks);
-                    lv_label_set_text(pwd_label, buffer);
-                    
-                    // Add connect button
-                    lv_obj_t* connect_btn = lv_btn_create(wifi_keyboard);
-                    lv_obj_set_size(connect_btn, 140, 50);
-                    lv_obj_align(connect_btn, LV_ALIGN_CENTER, -75, 50);
-                    lv_obj_add_style(connect_btn, &style_btn, 0);
-                    lv_obj_add_style(connect_btn, &style_btn_pressed, LV_STATE_PRESSED);
-                    
-                    lv_obj_t* connect_label = lv_label_create(connect_btn);
-                    lv_label_set_text(connect_label, "Connect");
-                    lv_obj_center(connect_label);
-                    
-                    // Add cancel button
-                    lv_obj_t* cancel_btn = lv_btn_create(wifi_keyboard);
-                    lv_obj_set_size(cancel_btn, 140, 50);
-                    lv_obj_align(cancel_btn, LV_ALIGN_CENTER, 75, 50);
-                    lv_obj_add_style(cancel_btn, &style_btn, 0);
-                    lv_obj_add_style(cancel_btn, &style_btn_pressed, LV_STATE_PRESSED);
-                    
-                    lv_obj_t* cancel_label = lv_label_create(cancel_btn);
-                    lv_label_set_text(cancel_label, "Cancel");
-                    lv_obj_center(cancel_label);
-                    
-                    // Add event callbacks
-                    lv_obj_add_event_cb(connect_btn, [](lv_event_t* e) {
-                        connectToWiFi();
-                    }, LV_EVENT_CLICKED, NULL);
-                    
-                    lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
-                        if (wifi_keyboard) {
-                            lv_obj_del(wifi_keyboard);
-                            wifi_keyboard = nullptr;
-                        }
-                    }, LV_EVENT_CLICKED, NULL);
-                }
-            } else {
-                // For regular keys, let the default handler process them
-                lv_obj_t *ta = lv_keyboard_get_textarea(kb);
-                if (ta && txt) {
-                    lv_textarea_add_text(ta, txt);
-                }
-            }
-        }
     }
 }
