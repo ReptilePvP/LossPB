@@ -106,44 +106,59 @@ const lv_btnmatrix_ctrl_t keyboard_ctrl_map[] = {
     4, 4, 4, 
     4, 4, 4, 
     4, 4, 4, 
-    4, 4, 4,
     3, 7, 7, 7  // Changed last row controls for special keys
 };
 
 // Keyboard maps for different pages
-const char *keyboard_maps[][23] = {
-    { // Page 0: Lowercase letters (first set)
-      "a", "b", "c", "\n",
+const char *btnm_mapplus[11][23] = {
+    { "a", "b", "c", "\n",
       "d", "e", "f", "\n",
       "g", "h", "i", "\n",
-      "j", "k", "l", "\n",
-      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, ""
-    },
-    { // Page 1: Lowercase letters (second set)
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, "" },
+    { "j", "k", "l", "\n",
       "m", "n", "o", "\n",
       "p", "q", "r", "\n",
-      "s", "t", "u", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, "" },
+    { "s", "t", "u", "\n",
       "v", "w", "x", "\n",
-      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, ""
-    },
-    { // Page 2: Lowercase letters (third set)
-      "y", "z", ".", "\n",
-      "0", "1", "2", "\n",
-      "3", "4", "5", "\n",
-      "6", "7", "8", "\n",
-      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, ""
-    },
-    { // Page 3: Special characters
-      "9", "@", "#", "\n",
-      "$", "%", "&", "\n",
-      "*", "-", "+", "\n",
-      "_", "=", " ", "\n",
-      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, ""
-    }
-};
+      "y", "z", " ", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, "" },
+    { "A", "B", "C", "\n",
+      "D", "E", "F", "\n",
+      "G", "H", "I", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, "" },
+    { "J", "K", "L", "\n",
+      "N", "M", "O", "\n",
+      "P", "Q", "R", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, "" },
+    { "S", "T", "U", "\n",
+      "V", "W", "X", "\n",
+      "Y", "Z", " ", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, "" },
+    { "1", "2", "3", "\n",
+      "4", "5", "6", "\n",
+      "7", "8", "9", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, "" },
+    { "0", "+", "-", "\n",
+      "/", "*", "=", "\n",
+      "!", "?", " ", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, "" },
+    { "<", ">", "@", "\n",
+      "%", "$", "(", "\n",
+      ")", "{", "}", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, "" },
+    { "[", "]", ";", "\n",
+      "\"", "'", ".", "\n",
+      ",", ":", " ", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, "" },
+    { "\\", "_", "~", "\n",
+      "|", "&", "^", "\n",
+      "`", "#", " ", "\n",
+      LV_SYMBOL_OK, LV_SYMBOL_BACKSPACE, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, "" }
+  };
 
 // Number of keyboard pages
-const int NUM_KEYBOARD_PAGES = sizeof(keyboard_maps) / sizeof(keyboard_maps[0]);
+const int NUM_KEYBOARD_PAGES = sizeof(btnm_mapplus) / sizeof(btnm_mapplus[0]);
 
 void initStyles() {
     lv_style_init(&style_screen);
@@ -192,14 +207,15 @@ void setup() {
     DEBUG_PRINT("Starting Loss Prevention Log...");
     
     auto cfg = M5.config();
+    cfg.output_power = false;
     CoreS3.begin(cfg);
+    CoreS3.Power.begin();
+    CoreS3.Power.setBatteryCharge(true);
+    CoreS3.Power.setChargeCurrent(600);
     DEBUG_PRINT("CoreS3 initialized");
     
     CoreS3.Display.setBrightness(255);
     CoreS3.Display.clear();
-    CoreS3.Display.setRotation(1);
-    CoreS3.Power.begin();
-    CoreS3.Power.setChargeCurrent(1000);
     DEBUG_PRINT("Display configured");
 
     // Add battery status check
@@ -267,7 +283,11 @@ void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) {
     if (t.state == m5::touch_state_t::touch) {
         data->state = LV_INDEV_STATE_PR;
         data->point.x = t.x;
-        data->point.y = t.y;
+        data->point.y = t.y; // Apply vertical offset to fix alignment
+        
+        // Debug the coordinates if needed
+        DEBUG_PRINTF("Touch: (%d, %d) → adjusted to (%d, %d)\n", 
+            t.x, t.y, data->point.x, data->point.y);
     } else {
         data->state = LV_INDEV_STATE_REL;
     }
@@ -1262,7 +1282,7 @@ void showWiFiKeyboard() {
         lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, -5);
         
         // Set map and control map
-        lv_btnmatrix_set_map(kb, keyboard_maps[keyboard_page_index]);
+        lv_btnmatrix_set_map(kb, btnm_mapplus[keyboard_page_index]);
         lv_btnmatrix_set_ctrl_map(kb, keyboard_ctrl_map);
         
         // Add event handler for the button matrix
@@ -1281,12 +1301,14 @@ void showWiFiKeyboard() {
                         // Move to next keyboard page
                         keyboard_page_index = (keyboard_page_index + 1) % NUM_KEYBOARD_PAGES;
                         DEBUG_PRINTF("Changing to keyboard page: %d\n", keyboard_page_index);
-                        lv_btnmatrix_set_map(btnm, keyboard_maps[keyboard_page_index]);
+                        // Original (incorrect): lv_btnmatrix_set_map(btnm, keyboard_maps[keyboard_page_index]);
+                        lv_btnmatrix_set_map(btnm, btnm_mapplus[keyboard_page_index]);
                     } else if (strcmp(txt, LV_SYMBOL_LEFT) == 0) {
                         // Move to previous keyboard page
                         keyboard_page_index = (keyboard_page_index - 1 + NUM_KEYBOARD_PAGES) % NUM_KEYBOARD_PAGES;
                         DEBUG_PRINTF("Changing to keyboard page: %d\n", keyboard_page_index);
-                        lv_btnmatrix_set_map(btnm, keyboard_maps[keyboard_page_index]);
+                        // Original (incorrect): lv_btnmatrix_set_map(btnm, keyboard_maps[keyboard_page_index]);
+                        lv_btnmatrix_set_map(btnm, btnm_mapplus[keyboard_page_index]);
                     } else if (strcmp(txt, LV_SYMBOL_BACKSPACE) == 0) {
                         // Handle backspace
                         lv_obj_t* ta = lv_obj_get_child(wifi_keyboard, 0);
