@@ -255,6 +255,7 @@ void releaseSPIBus() {
     delay(100);
 }
 
+// Function to initialize file system
 void initFileSystem() {
     if (fileSystemInitialized) {
         DEBUG_PRINT("File system already initialized");
@@ -520,32 +521,62 @@ void addStatusBar(lv_obj_t* screen) {
 
 void createMainMenu() {
     // Clean up all existing screens to prevent memory leaks
-    if (mainScreen) {
+    if (mainScreen && lv_obj_is_valid(mainScreen)) {
         DEBUG_PRINT("Cleaning existing main screen");
-        lv_obj_del(mainScreen);
+        lv_obj_del_async(mainScreen); // Defer deletion
         mainScreen = nullptr;
     }
     
-    if (wifi_screen) {
+    if (wifi_screen && lv_obj_is_valid(wifi_screen)) {
         DEBUG_PRINT("Cleaning existing wifi screen");
-        lv_obj_del(wifi_screen);
+        cleanupWiFiResources();
+        lv_obj_del_async(wifi_screen);
         wifi_screen = nullptr;
     }
     
-    if (wifi_manager_screen) {
+    if (wifi_manager_screen && lv_obj_is_valid(wifi_manager_screen)) {
         DEBUG_PRINT("Cleaning existing wifi manager screen");
-        lv_obj_del(wifi_manager_screen);
+        lv_obj_del_async(wifi_manager_screen);
         wifi_manager_screen = nullptr;
     }
     
-    if (wifi_keyboard) {
+    if (wifi_keyboard && lv_obj_is_valid(wifi_keyboard)) {
         DEBUG_PRINT("Cleaning existing wifi keyboard");
-        lv_obj_del(wifi_keyboard);
+        lv_obj_del_async(wifi_keyboard);
         wifi_keyboard = nullptr;
+    }
+    
+    if (genderMenu && lv_obj_is_valid(genderMenu)) {
+        DEBUG_PRINT("Cleaning existing gender menu");
+        lv_obj_del_async(genderMenu);
+        genderMenu = nullptr;
+    }
+    
+    if (colorMenu && lv_obj_is_valid(colorMenu)) {
+        DEBUG_PRINT("Cleaning existing color menu");
+        lv_obj_del_async(colorMenu);
+        colorMenu = nullptr;
+    }
+    
+    if (itemMenu && lv_obj_is_valid(itemMenu)) {
+        DEBUG_PRINT("Cleaning existing item menu");
+        lv_obj_del_async(itemMenu);
+        itemMenu = nullptr;
+    }
+    
+    if (confirmScreen && lv_obj_is_valid(confirmScreen)) {
+        DEBUG_PRINT("Cleaning existing confirm screen");
+        lv_obj_del_async(confirmScreen);
+        confirmScreen = nullptr;
     }
     
     // Create new main screen
     mainScreen = lv_obj_create(NULL);
+    if (!mainScreen) {
+        DEBUG_PRINT("Failed to create main screen!");
+        return;
+    }
+    
     lv_obj_add_style(mainScreen, &style_screen, 0);
     lv_scr_load(mainScreen);
     addStatusBar(mainScreen);
@@ -2346,22 +2377,8 @@ void createWiFiManagerScreen() {
     lv_obj_center(back_label);
     
     lv_obj_add_event_cb(back_btn, [](lv_event_t* e) {
-        DEBUG_PRINT("Cleaning existing main screen");
-        
-        // First, free any memory allocated for saved networks list items
-        if (saved_networks_list != nullptr) {
-            // No need to free user data here as we're using integers, not allocated memory
-            lv_obj_clean(saved_networks_list);
-        }
-        
-        // Delete the screen first to ensure all child objects are properly cleaned up
-        if (wifi_manager_screen != nullptr) {
-            lv_obj_del(wifi_manager_screen);
-            wifi_manager_screen = nullptr;
-        }
-        
-        // Create the main menu after cleaning up
-        createMainMenu();
+        DEBUG_PRINT("WiFi Manager Back button pressed");
+        createMainMenu(); // Let createMainMenu() handle all cleanup
     }, LV_EVENT_CLICKED, NULL);
     
     lv_scr_load(wifi_manager_screen);
@@ -2447,7 +2464,7 @@ bool appendToLog(const String& entry) {
 }
 
 void createViewLogsScreen() {
-    lv_obj_t* logs_screen = lv_obj_create(NULL);
+    lv_obj_t* logs_screen = lv_obj_create(NULL); // Local variable, no static
     lv_obj_set_style_bg_color(logs_screen, lv_color_hex(0x000000), 0);
     
     // Create header
@@ -2474,6 +2491,14 @@ void createViewLogsScreen() {
     lv_label_set_text(back_label, "Back");
     lv_obj_center(back_label);
     lv_obj_add_event_cb(back_btn, [](lv_event_t* e) {
+        DEBUG_PRINT("Logs Screen Back button pressed");
+        lv_obj_t* current_screen = lv_scr_act();
+        if (current_screen && lv_obj_is_valid(current_screen)) {
+            DEBUG_PRINT("Deleting logs screen before returning to main menu");
+            lv_obj_del_async(current_screen); // Defer deletion
+        }
+        lv_timer_handler(); // Process pending LVGL tasks
+        delay(10); // Small delay to stabilize
         createMainMenu();
     }, LV_EVENT_CLICKED, NULL);
     
