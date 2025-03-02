@@ -4,8 +4,6 @@
 #include <lvgl.h>
 #include <WiFi.h>
 #include <Preferences.h>
-#include <SPIFFS.h>
-#include <FS.h>
 #include <SD.h>
 #include <SPI.h>
 #include <time.h>
@@ -18,9 +16,9 @@
 #define DEBUG_PRINTF(x, ...) if(DEBUG_ENABLED) { Serial.print(millis()); Serial.print(": "); Serial.printf(x, __VA_ARGS__); }
 
 // SD Card pins for M5Stack CoreS3
-#define SD_SPI_SCK_PIN  7
-#define SD_SPI_MISO_PIN 8
-#define SD_SPI_MOSI_PIN 6
+#define SD_SPI_SCK_PIN  36
+#define SD_SPI_MISO_PIN 35
+#define SD_SPI_MOSI_PIN 37
 #define SD_SPI_CS_PIN   4
 
 // Forward declarations for timer callbacks
@@ -60,9 +58,6 @@ void initFileSystem();
 void syncTimeWithNTP();
 void listSavedEntries();
 void saveEntry(const String& entry);
-
-// Pin Definitions
-#define KEY_PIN 8  // M5Stack Key UNIT
 
 // Global variables for scrolling
 lv_obj_t *current_scroll_obj = nullptr;
@@ -271,6 +266,8 @@ void setup() {
     CoreS3.Display.setBrightness(255);
     CoreS3.Display.clear();
     DEBUG_PRINT("Display configured");
+
+    // Remove SD card initialization code from here as it's done in initFileSystem()
 
     // Add battery status check
     DEBUG_PRINTF("Battery Voltage: %f V\n", CoreS3.Power.getBatteryVoltage());
@@ -2335,9 +2332,12 @@ bool appendToLog(const String& entry) {
     }
     
     // Check available space before writing
-    size_t free_space = SPIFFS.totalBytes() - SPIFFS.usedBytes();
+    uint64_t total_bytes = SD.totalBytes();
+    uint64_t used_bytes = SD.usedBytes();
+    uint64_t free_space = total_bytes - used_bytes;
+    
     if (free_space < entry.length() + 50) {  // Add some margin
-        DEBUG_PRINT("Not enough space in SPIFFS");
+        DEBUG_PRINT("Not enough space on SD card");
         
         // Create a message box to inform the user
         lv_obj_t* msgbox = lv_msgbox_create(NULL, "Storage Full", 
@@ -2354,7 +2354,7 @@ bool appendToLog(const String& entry) {
     const int MAX_ATTEMPTS = 3;
     
     while (attempts < MAX_ATTEMPTS) {
-        file = SPIFFS.open(LOG_FILENAME, FILE_APPEND);
+        file = SD.open(LOG_FILENAME, FILE_APPEND);
         if (file) break;
         
         DEBUG_PRINTF("Failed to open log file for writing (attempt %d/%d)\n", 
@@ -2368,11 +2368,11 @@ bool appendToLog(const String& entry) {
         
         // Try to recover by recreating the file
         DEBUG_PRINT("Attempting to recreate the log file...");
-        if (SPIFFS.exists(LOG_FILENAME)) {
-            SPIFFS.remove(LOG_FILENAME);
+        if (SD.exists(LOG_FILENAME)) {
+            SD.remove(LOG_FILENAME);
         }
         
-        file = SPIFFS.open(LOG_FILENAME, FILE_WRITE);
+        file = SD.open(LOG_FILENAME, FILE_WRITE);
         if (!file) {
             DEBUG_PRINT("Recovery failed, cannot create log file");
             return false;
@@ -2455,7 +2455,7 @@ void createViewLogsScreen() {
         lv_label_set_text(logs_label, "Error: Storage system unavailable");
     }
     // Check if log file exists
-    else if (!SPIFFS.exists(LOG_FILENAME)) {
+    else if (!SD.exists(LOG_FILENAME)) {
         lv_label_set_text(logs_label, "No logs found");
     } 
     else {
@@ -2465,7 +2465,7 @@ void createViewLogsScreen() {
         const int MAX_ATTEMPTS = 3;
         
         while (attempts < MAX_ATTEMPTS) {
-            file = SPIFFS.open(LOG_FILENAME, FILE_READ);
+            file = SD.open(LOG_FILENAME, FILE_READ);
             if (file) break;
             
             DEBUG_PRINTF("Failed to open log file for reading (attempt %d/%d)\n", 
@@ -2504,7 +2504,7 @@ void createViewLogsScreen() {
             // Read the log entries
             while (file.available()) {
                 String line = file.readStringUntil('\n');
-                logs += line + "\n\n";
+                println_log(line.c_str());
             }
             file.close();
             
@@ -2539,12 +2539,12 @@ void createViewLogsScreen() {
             const char* btn_text = lv_msgbox_get_active_btn_text(msgbox);
             
             if (btn_text && strcmp(btn_text, "Yes") == 0) {
-                if (SPIFFS.exists(LOG_FILENAME)) {
-                    if (SPIFFS.remove(LOG_FILENAME)) {
-                        DEBUG_PRINT("Log file cleared");
+                if (SD.exists(LOG_FILENAME)) {
+                    if (SD.remove(LOG_FILENAME)) {
+                        println_log("Log file cleared");
                         
                         // Create a new empty log file
-                        File logFile = SPIFFS.open(LOG_FILENAME, FILE_WRITE);
+                        File logFile = SD.open(LOG_FILENAME, FILE_WRITE);
                         if (logFile) {
                             logFile.println("# Loss Prevention Log - Created " + getTimestamp());
                             logFile.close();
@@ -2553,7 +2553,7 @@ void createViewLogsScreen() {
                         // Refresh the screen
                         createViewLogsScreen();
                     } else {
-                        DEBUG_PRINT("Failed to clear log file");
+                        println_log("Failed to clear log file");
                         
                         // Show error message
                         lv_obj_t* error = lv_msgbox_create(NULL, "Error", 
@@ -2795,26 +2795,28 @@ void connectToSavedNetworks() {
 }
 
 void initFileSystem() {
-    // First, try to end any previous SPIFFS session that might be hanging
-    SPIFFS.end();
+    // Check if SD card is already initialized
+    if (fileSystemInitialized) {
+        DEBUG_PRINT("File system already initialized");
+        return;
+    }
     
-    // Wait a moment before reinitializing
-    delay(100);
+    // Initialize SPI for SD card
+    SPI.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, SD_SPI_CS_PIN);
     
-    // Try to initialize SPIFFS with format_if_failed=true
-    DEBUG_PRINT("Initializing SPIFFS...");
-    if (!SPIFFS.begin(true)) {
-        DEBUG_PRINT("SPIFFS initialization failed, trying again...");
+    // Check if SD card is mounted
+    if (!SD.begin(SD_SPI_CS_PIN, SPI, 25000000)) {
+        DEBUG_PRINT("SD card initialization failed, trying again...");
         
         // Try one more time with a delay
         delay(500);
-        if (!SPIFFS.begin(true)) {
-            DEBUG_PRINT("SPIFFS initialization failed again, creating fallback mechanism");
+        if (!SD.begin(SD_SPI_CS_PIN, SPI, 25000000)) {
+            DEBUG_PRINT("SD card initialization failed again, creating fallback mechanism");
             fileSystemInitialized = false;
             
             // Create a message box to inform the user
             lv_obj_t* msgbox = lv_msgbox_create(NULL, "Storage Warning", 
-                "File system initialization failed. Log entries will not be saved.", NULL, true);
+                "SD card initialization failed. Log entries will not be saved.", NULL, true);
             lv_obj_set_size(msgbox, 280, 150);
             lv_obj_center(msgbox);
             
@@ -2822,18 +2824,36 @@ void initFileSystem() {
         }
     }
     
-    // If we got here, SPIFFS initialized successfully
-    DEBUG_PRINT("SPIFFS initialized successfully");
+    // If we got here, SD card initialized successfully
+    DEBUG_PRINT("SD card initialized successfully");
     fileSystemInitialized = true;
     
+    // Check card type and print information
+    uint8_t cardType = SD.cardType();
+    if (cardType == CARD_NONE) {
+        DEBUG_PRINT("No SD card attached");
+        return;
+    }
+    
+    // Print card type
+    if (cardType == CARD_MMC) {
+        DEBUG_PRINT("SD Card Type: MMC");
+    } else if (cardType == CARD_SD) {
+        DEBUG_PRINT("SD Card Type: SDSC");
+    } else if (cardType == CARD_SDHC) {
+        DEBUG_PRINT("SD Card Type: SDHC");
+    } else {
+        DEBUG_PRINT("SD Card Type: UNKNOWN");
+    }
+    
     // Check available space
-    size_t total = SPIFFS.totalBytes();
-    size_t used = SPIFFS.usedBytes();
-    DEBUG_PRINTF("SPIFFS: %u bytes total, %u bytes used, %u bytes free\n", 
+    uint64_t total = SD.totalBytes();
+    uint64_t used = SD.usedBytes();
+    DEBUG_PRINTF("SD Card: %llu bytes total, %llu bytes used, %llu bytes free\n", 
         total, used, total - used);
     
-    // List files in SPIFFS
-    File root = SPIFFS.open("/");
+    // List files in SD root directory
+    File root = SD.open("/");
     if (!root) {
         DEBUG_PRINT("Failed to open root directory");
         return;
@@ -2844,7 +2864,7 @@ void initFileSystem() {
         return;
     }
     
-    DEBUG_PRINT("Files in SPIFFS:");
+    DEBUG_PRINT("Files in SD card:");
     File file = root.openNextFile();
     while (file) {
         if (!file.isDirectory()) {
@@ -2854,9 +2874,9 @@ void initFileSystem() {
     }
     
     // Create the log file if it doesn't exist
-    if (!SPIFFS.exists(LOG_FILENAME)) {
+    if (!SD.exists(LOG_FILENAME)) {
         DEBUG_PRINT("Creating log file...");
-        File logFile = SPIFFS.open(LOG_FILENAME, FILE_WRITE);
+        File logFile = SD.open(LOG_FILENAME, FILE_WRITE);
         if (logFile) {
             logFile.println("# Loss Prevention Log - Created " + getTimestamp());
             logFile.close();
@@ -2890,21 +2910,21 @@ void listSavedEntries() {
         initFileSystem();
     }
     
-    if (!SPIFFS.exists(LOG_FILENAME)) {
-        DEBUG_PRINT("Log file does not exist");
+    if (!SD.exists(LOG_FILENAME)) {
+        println_log("Log file does not exist");
         return;
     }
     
-    File file = SPIFFS.open(LOG_FILENAME, FILE_READ);
+    File file = SD.open(LOG_FILENAME, FILE_READ);
     if (!file) {
-        DEBUG_PRINT("Failed to open log file for reading");
+        println_log("Failed to open log file for reading");
         return;
     }
     
-    DEBUG_PRINT("Saved entries:");
+    println_log("Saved entries:");
     while (file.available()) {
         String line = file.readStringUntil('\n');
-        DEBUG_PRINT(line);
+        println_log(line.c_str());
     }
     
     file.close();
@@ -2928,5 +2948,27 @@ void saveEntry(const String& entry) {
         } else {
             updateStatus("Error: Failed to Save Entry", 0xFF0000);
         }
+    }
+}
+
+// Helper functions for logging to both Serial and Display
+void println_log(const char *str) {
+    Serial.println(str);
+    // If we have a status label, update it
+    if (status_bar != nullptr) {
+        lv_label_set_text(status_bar, str);
+    }
+}
+
+void printf_log(const char *format, ...) {
+    char buf[256];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buf, 256, format, args);
+    va_end(args);
+    Serial.print(buf);
+    // If we have a status label, update it
+    if (status_bar != nullptr) {
+        lv_label_set_text(status_bar, buf);
     }
 }
