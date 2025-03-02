@@ -4,8 +4,9 @@
 #include <lvgl.h>
 #include <WiFi.h>
 #include <Preferences.h>
-#include <SD.h>
 #include <SPI.h>
+SPIClass SPI_SD; // Custom SPI instance for SD card
+#include <SD.h>
 #include <time.h>
 
 // Debug flag - set to true to enable debug output
@@ -20,6 +21,8 @@
 #define SD_SPI_MISO_PIN 35
 #define SD_SPI_MOSI_PIN 37
 #define SD_SPI_CS_PIN   4
+#define TFT_DC 35
+
 
 // Forward declarations for timer callbacks
 void scan_timer_callback(lv_timer_t* timer);
@@ -246,6 +249,88 @@ const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = -18000;  // Eastern Time -5 hours
 const int daylightOffset_sec = 3600; // 1 hour DST
 
+// Function to release SPI bus
+void releaseSPIBus() {
+    SPI.end();
+    delay(100);
+}
+
+void initFileSystem() {
+    if (fileSystemInitialized) {
+        DEBUG_PRINT("File system already initialized");
+        return;
+    }
+    
+    DEBUG_PRINT("Initializing SD card...");
+    
+    // Stop the default SPI (used by LCD)
+    SPI.end();
+    delay(200); // Give it a moment to settle
+    
+    // Start custom SPI for SD card
+    SPI_SD.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, -1); // -1 means no default CS
+    pinMode(SD_SPI_CS_PIN, OUTPUT); // Set CS pin (4) as OUTPUT
+    digitalWrite(SD_SPI_CS_PIN, HIGH); // Deselect SD card (HIGH = off)
+    delay(200); // Wait for SD card to stabilize
+    
+    bool sdInitialized = false;
+    
+    // Try initializing the SD card up to 3 times
+    for (int i = 0; i < 3 && !sdInitialized; i++) {
+        DEBUG_PRINTF("Attempt %d: Initializing SD at 2 MHz...\n", i + 1);
+        sdInitialized = SD.begin(SD_SPI_CS_PIN, SPI_SD, 2000000); // CS=4, custom SPI, 2 MHz
+        if (!sdInitialized) {
+            DEBUG_PRINTF("Attempt %d failed\n", i + 1);
+            delay(100); // Short delay before retrying
+        }
+    }
+    
+    if (!sdInitialized) {
+        DEBUG_PRINT("All SD card initialization attempts failed");
+        // Show error message on screen
+        lv_obj_t* msgbox = lv_msgbox_create(NULL, "Storage Error", 
+            "SD card initialization failed. Please check the card.", NULL, true);
+        lv_obj_set_size(msgbox, 280, 150);
+        lv_obj_center(msgbox);
+        
+        // Clean up and switch back to LCD mode
+        SPI_SD.end();
+        SPI.begin();
+        pinMode(TFT_DC, OUTPUT);
+        digitalWrite(TFT_DC, HIGH);
+        return;
+    }
+    
+    DEBUG_PRINT("SD card initialized successfully");
+    fileSystemInitialized = true;
+    
+    // Check card type and print info
+    uint8_t cardType = SD.cardType();
+    if (cardType == CARD_NONE) {
+        DEBUG_PRINT("No SD card attached");
+    } else {
+        DEBUG_PRINT("SD Card Type: ");
+        if (cardType == CARD_MMC) {
+            DEBUG_PRINT("MMC");
+        } else if (cardType == CARD_SD) {
+            DEBUG_PRINT("SDSC");
+        } else if (cardType == CARD_SDHC) {
+            DEBUG_PRINT("SDHC");
+        } else {
+            DEBUG_PRINT("UNKNOWN");
+        }
+        
+        uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+        DEBUG_PRINTF("SD Card Size: %lluMB\n", cardSize);
+    }
+    
+    // Switch back to LCD mode after initialization
+    SPI_SD.end();
+    SPI.begin();
+    pinMode(TFT_DC, OUTPUT);
+    digitalWrite(TFT_DC, HIGH);
+}
+
 void setup() {
     Serial.begin(115200);
     while (!Serial) delay(10);
@@ -267,13 +352,12 @@ void setup() {
     CoreS3.Display.clear();
     DEBUG_PRINT("Display configured");
 
-    // Remove SD card initialization code from here as it's done in initFileSystem()
-
     // Add battery status check
     DEBUG_PRINTF("Battery Voltage: %f V\n", CoreS3.Power.getBatteryVoltage());
     DEBUG_PRINTF("Is Charging: %d\n", CoreS3.Power.isCharging());
     DEBUG_PRINTF("Battery Level: %d%%\n", CoreS3.Power.getBatteryLevel());
 
+    // Initialize LVGL
     lv_init();
     DEBUG_PRINT("LVGL initialized");
     
@@ -294,11 +378,13 @@ void setup() {
     lv_indev_drv_register(&indev_drv);
     DEBUG_PRINT("Touch input driver registered");
 
-    // Initialize file system
-    initFileSystem();
-
+    // Initialize styles before file system
     initStyles();
     DEBUG_PRINT("UI styles initialized");
+    
+    // Initialize file system after display is set up
+    initFileSystem();
+    
     createMainMenu();
     DEBUG_PRINT("Main menu created");
     
@@ -2320,72 +2406,36 @@ bool appendToLog(const String& entry) {
         initFileSystem();
         if (!fileSystemInitialized) {
             DEBUG_PRINT("File system not initialized, cannot save entry");
-            
-            // Create a message box to inform the user
-            lv_obj_t* msgbox = lv_msgbox_create(NULL, "Storage Error", 
-                "Cannot save entry. Storage system unavailable.", NULL, true);
-            lv_obj_set_size(msgbox, 280, 150);
-            lv_obj_center(msgbox);
-            
             return false;
         }
     }
     
-    // Check available space before writing
-    uint64_t total_bytes = SD.totalBytes();
-    uint64_t used_bytes = SD.usedBytes();
-    uint64_t free_space = total_bytes - used_bytes;
+    // Switch to SD card mode
+    SPI.end(); // Stop LCD SPI
+    SPI_SD.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, -1);
+    pinMode(SD_SPI_CS_PIN, OUTPUT);
+    digitalWrite(SD_SPI_CS_PIN, HIGH);
+    delay(100);
     
-    if (free_space < entry.length() + 50) {  // Add some margin
-        DEBUG_PRINT("Not enough space on SD card");
-        
-        // Create a message box to inform the user
-        lv_obj_t* msgbox = lv_msgbox_create(NULL, "Storage Full", 
-            "Not enough space to save entry. Please clear some logs.", NULL, true);
-        lv_obj_set_size(msgbox, 280, 150);
-        lv_obj_center(msgbox);
-        
+    File file = SD.open(LOG_FILENAME, FILE_APPEND);
+    if (!file) {
+        DEBUG_PRINT("Failed to open log file for writing");
+        SPI_SD.end();
+        SPI.begin();
+        pinMode(TFT_DC, OUTPUT);
+        digitalWrite(TFT_DC, HIGH);
         return false;
     }
     
-    // Try to open the file with multiple attempts if needed
-    File file;
-    int attempts = 0;
-    const int MAX_ATTEMPTS = 3;
-    
-    while (attempts < MAX_ATTEMPTS) {
-        file = SD.open(LOG_FILENAME, FILE_APPEND);
-        if (file) break;
-        
-        DEBUG_PRINTF("Failed to open log file for writing (attempt %d/%d)\n", 
-            attempts + 1, MAX_ATTEMPTS);
-        delay(100);
-        attempts++;
-    }
-    
-    if (!file) {
-        DEBUG_PRINT("Failed to open log file for writing after multiple attempts");
-        
-        // Try to recover by recreating the file
-        DEBUG_PRINT("Attempting to recreate the log file...");
-        if (SD.exists(LOG_FILENAME)) {
-            SD.remove(LOG_FILENAME);
-        }
-        
-        file = SD.open(LOG_FILENAME, FILE_WRITE);
-        if (!file) {
-            DEBUG_PRINT("Recovery failed, cannot create log file");
-            return false;
-        }
-        
-        DEBUG_PRINT("Log file recreated successfully");
-    }
-    
-    // Format: timestamp + entry + newline
     String formattedEntry = getTimestamp() + ": " + entry + "\n";
-    
     size_t bytesWritten = file.print(formattedEntry);
     file.close();
+    
+    // Switch back to LCD mode
+    SPI_SD.end();
+    SPI.begin();
+    pinMode(TFT_DC, OUTPUT);
+    digitalWrite(TFT_DC, HIGH);
     
     if (bytesWritten == 0) {
         DEBUG_PRINT("Failed to write to log file");
@@ -2423,7 +2473,6 @@ void createViewLogsScreen() {
     lv_obj_t* back_label = lv_label_create(back_btn);
     lv_label_set_text(back_label, "Back");
     lv_obj_center(back_label);
-    
     lv_obj_add_event_cb(back_btn, [](lv_event_t* e) {
         createMainMenu();
     }, LV_EVENT_CLICKED, NULL);
@@ -2453,67 +2502,56 @@ void createViewLogsScreen() {
     // Check if file system is available
     if (!fileSystemInitialized) {
         lv_label_set_text(logs_label, "Error: Storage system unavailable");
-    }
-    // Check if log file exists
-    else if (!SD.exists(LOG_FILENAME)) {
-        lv_label_set_text(logs_label, "No logs found");
-    } 
-    else {
-        // Try to open the file with multiple attempts if needed
-        File file;
-        int attempts = 0;
-        const int MAX_ATTEMPTS = 3;
+    } else {
+        // Switch to SD card mode
+        SPI.end(); // Stop LCD SPI
+        SPI_SD.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, -1);
+        pinMode(SD_SPI_CS_PIN, OUTPUT);
+        digitalWrite(SD_SPI_CS_PIN, HIGH);
+        delay(100);
         
-        while (attempts < MAX_ATTEMPTS) {
-            file = SD.open(LOG_FILENAME, FILE_READ);
-            if (file) break;
-            
-            DEBUG_PRINTF("Failed to open log file for reading (attempt %d/%d)\n", 
-                attempts + 1, MAX_ATTEMPTS);
-            delay(100);
-            attempts++;
-        }
-        
-        if (!file) {
-            lv_label_set_text(logs_label, "Error: Failed to open log file after multiple attempts");
+        if (!SD.exists(LOG_FILENAME)) {
+            lv_label_set_text(logs_label, "No logs found");
         } else {
-            String logs = "";
-            size_t fileSize = file.size();
-            
-            // If file is very large, only read the last portion to avoid memory issues
-            const size_t MAX_LOG_SIZE = 8192; // 8KB max to avoid memory issues
-            
-            if (fileSize > MAX_LOG_SIZE) {
-                DEBUG_PRINTF("Log file is large (%d bytes), reading last %d bytes\n", 
-                    fileSize, MAX_LOG_SIZE);
+            File file = SD.open(LOG_FILENAME, FILE_READ);
+            if (!file) {
+                lv_label_set_text(logs_label, "Error: Failed to open log file");
+            } else {
+                String logs = "";
+                size_t fileSize = file.size();
                 
-                // Skip to the appropriate position
-                if (file.seek(fileSize - MAX_LOG_SIZE)) {
-                    // Read to the end of the current line to align with complete entries
-                    if (file.available()) {
-                        file.readStringUntil('\n');
+                // If file is very large, only read the last portion to avoid memory issues
+                const size_t MAX_LOG_SIZE = 8192; // 8KB max
+                if (fileSize > MAX_LOG_SIZE) {
+                    DEBUG_PRINTF("Log file is large (%d bytes), reading last %d bytes\n", 
+                                 fileSize, MAX_LOG_SIZE);
+                    if (file.seek(fileSize - MAX_LOG_SIZE)) {
+                        file.readStringUntil('\n'); // Align with complete entries
+                        logs = "... (older logs not shown) ...\n\n";
+                    } else {
+                        DEBUG_PRINT("Failed to seek in log file");
+                        logs = "Error: Failed to read large log file\n";
                     }
-                    
-                    logs = "... (older logs not shown) ...\n\n";
+                }
+                
+                while (file.available()) {
+                    logs += file.readStringUntil('\n') + "\n";
+                }
+                file.close();
+                
+                if (logs.length() == 0) {
+                    lv_label_set_text(logs_label, "No logs found");
                 } else {
-                    DEBUG_PRINT("Failed to seek in log file");
-                    logs = "Error: Failed to read large log file\n";
+                    lv_label_set_text(logs_label, logs.c_str());
                 }
             }
-            
-            // Read the log entries
-            while (file.available()) {
-                String line = file.readStringUntil('\n');
-                println_log(line.c_str());
-            }
-            file.close();
-            
-            if (logs.length() == 0) {
-                lv_label_set_text(logs_label, "No logs found");
-            } else {
-                lv_label_set_text(logs_label, logs.c_str());
-            }
         }
+        
+        // Switch back to LCD mode
+        SPI_SD.end();
+        SPI.begin();
+        pinMode(TFT_DC, OUTPUT);
+        digitalWrite(TFT_DC, HIGH);
     }
     
     // Create clear button
@@ -2539,6 +2577,13 @@ void createViewLogsScreen() {
             const char* btn_text = lv_msgbox_get_active_btn_text(msgbox);
             
             if (btn_text && strcmp(btn_text, "Yes") == 0) {
+                // Switch to SD card mode
+                SPI.end();
+                SPI_SD.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, -1);
+                pinMode(SD_SPI_CS_PIN, OUTPUT);
+                digitalWrite(SD_SPI_CS_PIN, HIGH);
+                delay(100);
+                
                 if (SD.exists(LOG_FILENAME)) {
                     if (SD.remove(LOG_FILENAME)) {
                         println_log("Log file cleared");
@@ -2554,14 +2599,18 @@ void createViewLogsScreen() {
                         createViewLogsScreen();
                     } else {
                         println_log("Failed to clear log file");
-                        
-                        // Show error message
                         lv_obj_t* error = lv_msgbox_create(NULL, "Error", 
                             "Failed to clear log file", NULL, true);
                         lv_obj_set_size(error, 200, 120);
                         lv_obj_center(error);
                     }
                 }
+                
+                // Switch back to LCD mode
+                SPI_SD.end();
+                SPI.begin();
+                pinMode(TFT_DC, OUTPUT);
+                digitalWrite(TFT_DC, HIGH);
             }
             
             lv_msgbox_close(msgbox);
@@ -2794,130 +2843,38 @@ void connectToSavedNetworks() {
     }
 }
 
-void initFileSystem() {
-    // Check if SD card is already initialized
-    if (fileSystemInitialized) {
-        DEBUG_PRINT("File system already initialized");
-        return;
-    }
-    
-    // Initialize SPI for SD card
-    SPI.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, SD_SPI_CS_PIN);
-    
-    // Check if SD card is mounted
-    if (!SD.begin(SD_SPI_CS_PIN, SPI, 25000000)) {
-        DEBUG_PRINT("SD card initialization failed, trying again...");
-        
-        // Try one more time with a delay
-        delay(500);
-        if (!SD.begin(SD_SPI_CS_PIN, SPI, 25000000)) {
-            DEBUG_PRINT("SD card initialization failed again, creating fallback mechanism");
-            fileSystemInitialized = false;
-            
-            // Create a message box to inform the user
-            lv_obj_t* msgbox = lv_msgbox_create(NULL, "Storage Warning", 
-                "SD card initialization failed. Log entries will not be saved.", NULL, true);
-            lv_obj_set_size(msgbox, 280, 150);
-            lv_obj_center(msgbox);
-            
-            return;
-        }
-    }
-    
-    // If we got here, SD card initialized successfully
-    DEBUG_PRINT("SD card initialized successfully");
-    fileSystemInitialized = true;
-    
-    // Check card type and print information
-    uint8_t cardType = SD.cardType();
-    if (cardType == CARD_NONE) {
-        DEBUG_PRINT("No SD card attached");
-        return;
-    }
-    
-    // Print card type
-    if (cardType == CARD_MMC) {
-        DEBUG_PRINT("SD Card Type: MMC");
-    } else if (cardType == CARD_SD) {
-        DEBUG_PRINT("SD Card Type: SDSC");
-    } else if (cardType == CARD_SDHC) {
-        DEBUG_PRINT("SD Card Type: SDHC");
-    } else {
-        DEBUG_PRINT("SD Card Type: UNKNOWN");
-    }
-    
-    // Check available space
-    uint64_t total = SD.totalBytes();
-    uint64_t used = SD.usedBytes();
-    DEBUG_PRINTF("SD Card: %llu bytes total, %llu bytes used, %llu bytes free\n", 
-        total, used, total - used);
-    
-    // List files in SD root directory
-    File root = SD.open("/");
-    if (!root) {
-        DEBUG_PRINT("Failed to open root directory");
-        return;
-    }
-    
-    if (!root.isDirectory()) {
-        DEBUG_PRINT("Root is not a directory");
-        return;
-    }
-    
-    DEBUG_PRINT("Files in SD card:");
-    File file = root.openNextFile();
-    while (file) {
-        if (!file.isDirectory()) {
-            DEBUG_PRINTF("  %s (%d bytes)\n", file.name(), file.size());
-        }
-        file = root.openNextFile();
-    }
-    
-    // Create the log file if it doesn't exist
-    if (!SD.exists(LOG_FILENAME)) {
-        DEBUG_PRINT("Creating log file...");
-        File logFile = SD.open(LOG_FILENAME, FILE_WRITE);
-        if (logFile) {
-            logFile.println("# Loss Prevention Log - Created " + getTimestamp());
-            logFile.close();
-            DEBUG_PRINT("Log file created successfully");
-        } else {
-            DEBUG_PRINT("Failed to create log file");
-        }
-    }
-}
-
-void syncTimeWithNTP() {
-    if (WiFi.status() == WL_CONNECTED) {
-        DEBUG_PRINT("Syncing time with NTP server...");
-        configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-        
-        struct tm timeinfo;
-        if (getLocalTime(&timeinfo)) {
-            DEBUG_PRINTF("Time synchronized: %02d:%02d:%02d %02d/%02d/%04d\n", 
-                timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec,
-                timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year + 1900);
-        } else {
-            DEBUG_PRINT("Failed to obtain time");
-        }
-    } else {
-        DEBUG_PRINT("WiFi not connected, cannot sync time");
-    }
-}
-
 void listSavedEntries() {
     if (!fileSystemInitialized) {
         initFileSystem();
     }
     
+    // Switch to SD card mode
+    SPI.end();
+    SPI_SD.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, -1);
+    pinMode(SD_SPI_CS_PIN, OUTPUT);
+    digitalWrite(SD_SPI_CS_PIN, HIGH);
+    delay(100);
+    
     if (!SD.exists(LOG_FILENAME)) {
         println_log("Log file does not exist");
+        
+        // Switch back to LCD mode
+        SPI_SD.end();
+        SPI.begin();
+        pinMode(TFT_DC, OUTPUT);
+        digitalWrite(TFT_DC, HIGH);
         return;
     }
     
     File file = SD.open(LOG_FILENAME, FILE_READ);
     if (!file) {
         println_log("Failed to open log file for reading");
+        
+        // Switch back to LCD mode
+        SPI_SD.end();
+        SPI.begin();
+        pinMode(TFT_DC, OUTPUT);
+        digitalWrite(TFT_DC, HIGH);
         return;
     }
     
@@ -2926,8 +2883,13 @@ void listSavedEntries() {
         String line = file.readStringUntil('\n');
         println_log(line.c_str());
     }
-    
     file.close();
+    
+    // Switch back to LCD mode
+    SPI_SD.end();
+    SPI.begin();
+    pinMode(TFT_DC, OUTPUT);
+    digitalWrite(TFT_DC, HIGH);
 }
 
 void saveEntry(const String& entry) {
