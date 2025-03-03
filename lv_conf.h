@@ -8,17 +8,17 @@
 /*====================
    COLOR SETTINGS
  *====================*/
- 
+#define LV_FONT_MONTSERRAT_20 1
 #define LV_FONT_UNSCII_16 1
 #define LV_COLOR_DEPTH 16
-#define LV_COLOR_16_SWAP 0
+#define LV_COLOR_16_SWAP 1
 
 /*====================
    MEMORY SETTINGS
  *====================*/
 
 #define LV_MEM_CUSTOM 0
-#define LV_MEM_SIZE (64U * 1024U)     // Increased to 64KB
+#define LV_MEM_SIZE (128U * 1024U)     // Increased to 128KB for better performance
 #define LV_MEM_ADR 0
 #define LV_MEM_POOL_INCLUDE <stdlib.h>
 #define LV_MEM_POOL_ALLOC malloc
@@ -31,6 +31,7 @@
 #define LV_TICK_CUSTOM 1
 #define LV_TICK_CUSTOM_INCLUDE "Arduino.h"
 #define LV_TICK_CUSTOM_SYS_TIME_EXPR (millis())
+#define LV_DPI_DEF 130
 
 /*====================
  * FEATURE CONFIGURATION
@@ -83,15 +84,15 @@
 #define LV_USE_BTN        1
 #define LV_USE_BTNMATRIX  1    // Need this for brightness control
 #define LV_USE_CANVAS     0
-#define LV_USE_CHECKBOX   0
-#define LV_USE_DROPDOWN   0
+#define LV_USE_CHECKBOX   1
+#define LV_USE_DROPDOWN   1
 #define LV_USE_IMG        1
 #define LV_USE_LABEL      1
 #define LV_USE_LINE       0    // Changed to 0, not using lines
-#define LV_USE_ROLLER     0
+#define LV_USE_ROLLER     1
 #define LV_USE_SLIDER     1    // Need this for volume control
 #define LV_USE_SWITCH     1    // Need this for sound enable/disable
-#define LV_USE_TEXTAREA   0
+#define LV_USE_TEXTAREA   1
 #define LV_USE_TABLE      0
 
 /*==================
@@ -102,16 +103,16 @@
 #define LV_USE_CHART      0    // Changed to 0, not using charts currently
 #define LV_USE_COLORWHEEL 0
 #define LV_USE_IMGBTN     0
-#define LV_USE_KEYBOARD   0
+#define LV_USE_KEYBOARD   1
 #define LV_USE_LED        0
-#define LV_USE_LIST       0
+#define LV_USE_LIST       1
 #define LV_USE_MENU       0
-#define LV_USE_METER      1
+#define LV_USE_METER      0
 #define LV_USE_MSGBOX     1    // Need this for dialogs
 #define LV_USE_SPINBOX    0
-#define LV_USE_SPINNER    0
-#define LV_USE_TABVIEW    0
-#define LV_USE_TILEVIEW   0
+#define LV_USE_SPINNER    1
+#define LV_USE_TABVIEW    1
+#define LV_USE_TILEVIEW   1
 #define LV_USE_WIN        0
 
 #endif /*LV_CONF_H*/

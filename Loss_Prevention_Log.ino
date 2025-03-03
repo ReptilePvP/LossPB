@@ -66,6 +66,11 @@ void saveEntry(const String& entry);
 lv_obj_t *current_scroll_obj = nullptr;
 const int SCROLL_AMOUNT = 40;  // Pixels to scroll per button press
 
+// Global variables for color selection
+String selectedShirtColors = "";
+String selectedPantsColors = "";
+String selectedShoesColors = "";
+
 // WiFi connection management
 unsigned long lastWiFiConnectionAttempt = 0;
 const unsigned long WIFI_RECONNECT_INTERVAL = 10000; // 10 seconds between connection attempts
@@ -866,6 +871,13 @@ void createColorMenuShirt() {
     lv_obj_set_style_pad_row(container, 5, 0);
     lv_obj_set_style_pad_column(container, 5, 0);
 
+    // Set up grid layout on container
+    static lv_coord_t col_dsc[] = {90, 90, 90, LV_GRID_TEMPLATE_LAST};
+    static lv_coord_t row_dsc[] = {40, 40, 40, LV_GRID_TEMPLATE_LAST};
+    
+    lv_obj_set_grid_dsc_array(container, col_dsc, row_dsc);
+    lv_obj_set_layout(container, LV_LAYOUT_GRID);
+
     lv_obj_set_scroll_dir(container, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_ACTIVE);
     lv_obj_add_flag(container, LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLLABLE);
@@ -891,8 +903,6 @@ void createColorMenuShirt() {
     int numShirtColors = sizeof(shirtColors) / sizeof(shirtColors[0]);
     DEBUG_PRINTF("Creating %d shirt color buttons\n", numShirtColors);
 
-    String selectedColors = "";
-
     for (int i = 0; i < numShirtColors; i++) {
         lv_obj_t *btn = lv_btn_create(container);
         lv_obj_set_size(btn, 90, 40);
@@ -910,33 +920,31 @@ void createColorMenuShirt() {
             int idx = (int)lv_obj_get_user_data(btn);
             bool is_selected = lv_obj_has_state(btn, LV_STATE_USER_1);
 
-            static String selectedColors;
-
             if (!is_selected) {
                 lv_obj_add_state(btn, LV_STATE_USER_1);
                 lv_obj_set_style_border_width(btn, 3, LV_PART_MAIN);
                 lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFF00), LV_PART_MAIN);
-                if (!selectedColors.isEmpty()) selectedColors += "+";
-                selectedColors += shirtColors[idx];
+                if (!selectedShirtColors.isEmpty()) selectedShirtColors += "+";
+                selectedShirtColors += shirtColors[idx];
             } else {
                 lv_obj_clear_state(btn, LV_STATE_USER_1);
                 lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
                 lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-                int pos = selectedColors.indexOf(shirtColors[idx]);
+                int pos = selectedShirtColors.indexOf(shirtColors[idx]);
                 if (pos >= 0) {
-                    int nextPlus = selectedColors.indexOf("+", pos);
+                    int nextPlus = selectedShirtColors.indexOf("+", pos);
                     if (nextPlus >= 0) {
-                        selectedColors.remove(pos, nextPlus - pos + 1);
+                        selectedShirtColors.remove(pos, nextPlus - pos + 1);
                     } else {
-                        if (pos > 0) selectedColors.remove(pos - 1, String(shirtColors[idx]).length() + 1);
-                        else selectedColors.remove(pos, String(shirtColors[idx]).length());
+                        if (pos > 0) selectedShirtColors.remove(pos - 1, String(shirtColors[idx]).length() + 1);
+                        else selectedShirtColors.remove(pos, String(shirtColors[idx]).length());
                     }
                 }
             }
             
-            DEBUG_PRINTF("Selected shirt colors: %s\n", selectedColors.c_str());
+            DEBUG_PRINTF("Selected shirt colors: %s\n", selectedShirtColors.c_str());
             
-            if (!selectedColors.isEmpty()) {
+            if (!selectedShirtColors.isEmpty()) {
                 if (shirt_next_btn == nullptr) {
                     shirt_next_btn = lv_btn_create(lv_obj_get_parent(lv_obj_get_parent(btn)));
                     lv_obj_align(shirt_next_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
@@ -949,7 +957,7 @@ void createColorMenuShirt() {
                     lv_obj_center(next_label);
                     
                     lv_obj_add_event_cb(shirt_next_btn, [](lv_event_t* e) {
-                        currentEntry += selectedColors + ",";
+                        currentEntry += selectedShirtColors + ",";
                         DEBUG_PRINTF("Current entry: %s\n", currentEntry.c_str());
                         delay(100);
                         DEBUG_PRINT("Transitioning to pants menu");
@@ -1052,13 +1060,13 @@ void createColorMenuPants() {
     lv_obj_set_style_pad_row(container, 8, 0);
     lv_obj_set_style_pad_column(container, 8, 0);
     
-    static const lv_coord_t col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-    static const lv_coord_t row_dsc[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+    // Set up grid layout on container with fixed sizes
+    static lv_coord_t col_dsc[] = {90, 90, 90, LV_GRID_TEMPLATE_LAST};
+    static lv_coord_t row_dsc[] = {40, 40, 40, LV_GRID_TEMPLATE_LAST};
     
     lv_obj_set_grid_dsc_array(container, col_dsc, row_dsc);
     lv_obj_set_layout(container, LV_LAYOUT_GRID);
     lv_obj_set_scroll_dir(container, LV_DIR_VER);
-    lv_obj_set_scroll_snap_y(container, LV_SCROLL_SNAP_CENTER);
     lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_ACTIVE);
     lv_obj_add_flag(container, LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLLABLE);
     current_scroll_obj = container;
@@ -1083,11 +1091,9 @@ void createColorMenuPants() {
     int numPantsColors = sizeof(pantsColors) / sizeof(pantsColors[0]);
     DEBUG_PRINTF("Creating %d pants color buttons\n", numPantsColors);
 
-    String selectedColors = "";
-
     for (int i = 0; i < numPantsColors; i++) {
         lv_obj_t *btn = lv_btn_create(container);
-        lv_obj_set_size(btn, 90, 30);
+        lv_obj_set_size(btn, 90, 40);
         lv_obj_add_style(btn, &style_btn, 0);
         lv_obj_add_style(btn, &style_btn_pressed, LV_STATE_PRESSED);
         lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, i % 3, 1, LV_GRID_ALIGN_STRETCH, i / 3, 1);
@@ -1102,33 +1108,31 @@ void createColorMenuPants() {
             int idx = (int)lv_obj_get_user_data(btn);
             bool is_selected = lv_obj_has_state(btn, LV_STATE_USER_1);
 
-            static String selectedColors;
-
             if (!is_selected) {
                 lv_obj_add_state(btn, LV_STATE_USER_1);
                 lv_obj_set_style_border_width(btn, 3, LV_PART_MAIN);
                 lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFF00), LV_PART_MAIN);
-                if (!selectedColors.isEmpty()) selectedColors += "+";
-                selectedColors += pantsColors[idx];
+                if (!selectedPantsColors.isEmpty()) selectedPantsColors += "+";
+                selectedPantsColors += pantsColors[idx];
             } else {
                 lv_obj_clear_state(btn, LV_STATE_USER_1);
                 lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
                 lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-                int pos = selectedColors.indexOf(pantsColors[idx]);
+                int pos = selectedPantsColors.indexOf(pantsColors[idx]);
                 if (pos >= 0) {
-                    int nextPlus = selectedColors.indexOf("+", pos);
+                    int nextPlus = selectedPantsColors.indexOf("+", pos);
                     if (nextPlus >= 0) {
-                        selectedColors.remove(pos, nextPlus - pos + 1);
+                        selectedPantsColors.remove(pos, nextPlus - pos + 1);
                     } else {
-                        if (pos > 0) selectedColors.remove(pos - 1, String(pantsColors[idx]).length() + 1);
-                        else selectedColors.remove(pos, String(pantsColors[idx]).length());
+                        if (pos > 0) selectedPantsColors.remove(pos - 1, String(pantsColors[idx]).length() + 1);
+                        else selectedPantsColors.remove(pos, String(pantsColors[idx]).length());
                     }
                 }
             }
             
-            DEBUG_PRINTF("Selected pants colors: %s\n", selectedColors.c_str());
+            DEBUG_PRINTF("Selected pants colors: %s\n", selectedPantsColors.c_str());
             
-            if (!selectedColors.isEmpty()) {
+            if (!selectedPantsColors.isEmpty()) {
                 if (pants_next_btn == nullptr) {
                     pants_next_btn = lv_btn_create(lv_obj_get_parent(lv_obj_get_parent(btn)));
                     lv_obj_align(pants_next_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
@@ -1141,7 +1145,7 @@ void createColorMenuPants() {
                     lv_obj_center(next_label);
                     
                     lv_obj_add_event_cb(pants_next_btn, [](lv_event_t* e) {
-                        currentEntry += selectedColors + ",";
+                        currentEntry += selectedPantsColors + ",";
                         DEBUG_PRINTF("Current entry: %s\n", currentEntry.c_str());
                         delay(100);
                         DEBUG_PRINT("Transitioning to shoes menu");
@@ -1229,11 +1233,9 @@ void createColorMenuPants() {
 void createColorMenuShoes() {
     DEBUG_PRINT("Creating Shoes Color Menu");
     
-    colorMenu = lv_obj_create(NULL);
-    lv_obj_t *newMenu = colorMenu;
+    lv_obj_t* newMenu = lv_obj_create(NULL);
     lv_obj_add_style(newMenu, &style_screen, 0);
     DEBUG_PRINTF("New color menu created: %p\n", newMenu);
-    
     addWifiIndicator(newMenu);
     addBatteryIndicator(newMenu);
     lv_timer_handler(); // Process any pending UI updates
@@ -1254,13 +1256,13 @@ void createColorMenuShoes() {
     lv_obj_set_style_pad_row(container, 8, 0);
     lv_obj_set_style_pad_column(container, 8, 0);
     
-    static const lv_coord_t col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-    static const lv_coord_t row_dsc[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+    // Set up grid layout on container with fixed sizes
+    static lv_coord_t col_dsc[] = {90, 90, 90, LV_GRID_TEMPLATE_LAST};
+    static lv_coord_t row_dsc[] = {40, 40, 40, LV_GRID_TEMPLATE_LAST};
     
     lv_obj_set_grid_dsc_array(container, col_dsc, row_dsc);
     lv_obj_set_layout(container, LV_LAYOUT_GRID);
     lv_obj_set_scroll_dir(container, LV_DIR_VER);
-    lv_obj_set_scroll_snap_y(container, LV_SCROLL_SNAP_CENTER);
     lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_ACTIVE);
     lv_obj_add_flag(container, LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLLABLE);
     current_scroll_obj = container;
@@ -1285,11 +1287,9 @@ void createColorMenuShoes() {
     int numShoeColors = sizeof(shoeColors) / sizeof(shoeColors[0]);
     DEBUG_PRINTF("Creating %d shoe color buttons\n", numShoeColors);
 
-    String selectedColors = "";
-
     for (int i = 0; i < numShoeColors; i++) {
         lv_obj_t *btn = lv_btn_create(container);
-        lv_obj_set_size(btn, 90, 30);
+        lv_obj_set_size(btn, 90, 40);
         lv_obj_add_style(btn, &style_btn, 0);
         lv_obj_add_style(btn, &style_btn_pressed, LV_STATE_PRESSED);
         lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, i % 3, 1, LV_GRID_ALIGN_STRETCH, i / 3, 1);
@@ -1304,33 +1304,31 @@ void createColorMenuShoes() {
             int idx = (int)lv_obj_get_user_data(btn);
             bool is_selected = lv_obj_has_state(btn, LV_STATE_USER_1);
 
-            static String selectedColors;
-
             if (!is_selected) {
                 lv_obj_add_state(btn, LV_STATE_USER_1);
                 lv_obj_set_style_border_width(btn, 3, LV_PART_MAIN);
                 lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFF00), LV_PART_MAIN);
-                if (!selectedColors.isEmpty()) selectedColors += "+";
-                selectedColors += shoeColors[idx];
+                if (!selectedShoesColors.isEmpty()) selectedShoesColors += "+";
+                selectedShoesColors += shoeColors[idx];
             } else {
                 lv_obj_clear_state(btn, LV_STATE_USER_1);
                 lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
                 lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-                int pos = selectedColors.indexOf(shoeColors[idx]);
+                int pos = selectedShoesColors.indexOf(shoeColors[idx]);
                 if (pos >= 0) {
-                    int nextPlus = selectedColors.indexOf("+", pos);
+                    int nextPlus = selectedShoesColors.indexOf("+", pos);
                     if (nextPlus >= 0) {
-                        selectedColors.remove(pos, nextPlus - pos + 1);
+                        selectedShoesColors.remove(pos, nextPlus - pos + 1);
                     } else {
-                        if (pos > 0) selectedColors.remove(pos - 1, String(shoeColors[idx]).length() + 1);
-                        else selectedColors.remove(pos, String(shoeColors[idx]).length());
+                        if (pos > 0) selectedShoesColors.remove(pos - 1, String(shoeColors[idx]).length() + 1);
+                        else selectedShoesColors.remove(pos, String(shoeColors[idx]).length());
                     }
                 }
             }
             
-            DEBUG_PRINTF("Selected shoe colors: %s\n", selectedColors.c_str());
+            DEBUG_PRINTF("Selected shoe colors: %s\n", selectedShoesColors.c_str());
             
-            if (!selectedColors.isEmpty()) {
+            if (!selectedShoesColors.isEmpty()) {
                 if (shoes_next_btn == nullptr) {
                     shoes_next_btn = lv_btn_create(lv_obj_get_parent(lv_obj_get_parent(btn)));
                     lv_obj_align(shoes_next_btn, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
@@ -1343,7 +1341,7 @@ void createColorMenuShoes() {
                     lv_obj_center(next_label);
                     
                     lv_obj_add_event_cb(shoes_next_btn, [](lv_event_t* e) {
-                        currentEntry += selectedColors + ",";
+                        currentEntry += selectedShoesColors + ",";
                         DEBUG_PRINTF("Current entry: %s\n", currentEntry.c_str());
                         delay(100);
                         DEBUG_PRINT("Transitioning to item menu");
@@ -1393,14 +1391,14 @@ void createColorMenuShoes() {
         }
     }
 
-    lv_obj_t *back_btn = lv_btn_create(colorMenu);
+    lv_obj_t *back_btn = lv_btn_create(newMenu);
     lv_obj_align(back_btn, LV_ALIGN_BOTTOM_LEFT, 10, -10);
     lv_obj_set_size(back_btn, 100, 40);
     lv_obj_add_style(back_btn, &style_btn, 0);
     lv_obj_add_style(back_btn, &style_btn_pressed, LV_STATE_PRESSED);
     
     lv_obj_t *back_label = lv_label_create(back_btn);
-    lv_label_set_text(back_label, "Back");
+    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
     lv_obj_center(back_label);
     
     lv_obj_add_event_cb(back_btn, [](lv_event_t *e) {
@@ -1417,7 +1415,7 @@ void createColorMenuShoes() {
         }
     }, LV_EVENT_CLICKED, NULL);
     
-    lv_scr_load(colorMenu);
+    lv_scr_load(newMenu);
     
     if (colorMenu && colorMenu != newMenu) {
         DEBUG_PRINTF("Cleaning existing color menu: %p\n", colorMenu);
@@ -2035,6 +2033,7 @@ void connectToWiFi() {
     delay(100);
     
     // Start connection attempt
+    DEBUG_PRINT("Starting WiFi connection");
     WiFi.begin(selected_ssid, selected_password);
     
     int attempt = 0;
@@ -2428,10 +2427,11 @@ bool appendToLog(const String& entry) {
     }
     
     // Switch to SD card mode
-    SPI.end(); // Stop LCD SPI
-    SPI_SD.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, -1);
-    pinMode(SD_SPI_CS_PIN, OUTPUT);
-    digitalWrite(SD_SPI_CS_PIN, HIGH);
+    SPI.end();
+    delay(100);
+    SPI_SD.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, -1); // -1 means no default CS
+    pinMode(SD_SPI_CS_PIN, OUTPUT); // Set CS pin (4) as OUTPUT
+    digitalWrite(SD_SPI_CS_PIN, HIGH); // Deselect SD card (HIGH = off)
     delay(100);
     
     File file = SD.open(LOG_FILENAME, FILE_APPEND);
@@ -2488,7 +2488,7 @@ void createViewLogsScreen() {
     lv_obj_set_style_bg_color(back_btn, lv_color_hex(0x1111AA), LV_STATE_PRESSED);
     
     lv_obj_t* back_label = lv_label_create(back_btn);
-    lv_label_set_text(back_label, "Back");
+    lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
     lv_obj_center(back_label);
     lv_obj_add_event_cb(back_btn, [](lv_event_t* e) {
         DEBUG_PRINT("Logs Screen Back button pressed");
@@ -2529,10 +2529,11 @@ void createViewLogsScreen() {
         lv_label_set_text(logs_label, "Error: Storage system unavailable");
     } else {
         // Switch to SD card mode
-        SPI.end(); // Stop LCD SPI
-        SPI_SD.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, -1);
-        pinMode(SD_SPI_CS_PIN, OUTPUT);
-        digitalWrite(SD_SPI_CS_PIN, HIGH);
+        SPI.end();
+        delay(100);
+        SPI_SD.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, -1); // -1 means no default CS
+        pinMode(SD_SPI_CS_PIN, OUTPUT); // Set CS pin (4) as OUTPUT
+        digitalWrite(SD_SPI_CS_PIN, HIGH); // Deselect SD card (HIGH = off)
         delay(100);
         
         if (!SD.exists(LOG_FILENAME)) {
@@ -2604,9 +2605,10 @@ void createViewLogsScreen() {
             if (btn_text && strcmp(btn_text, "Yes") == 0) {
                 // Switch to SD card mode
                 SPI.end();
-                SPI_SD.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, -1);
-                pinMode(SD_SPI_CS_PIN, OUTPUT);
-                digitalWrite(SD_SPI_CS_PIN, HIGH);
+                delay(100);
+                SPI_SD.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, -1); // -1 means no default CS
+                pinMode(SD_SPI_CS_PIN, OUTPUT); // Set CS pin (4) as OUTPUT
+                digitalWrite(SD_SPI_CS_PIN, HIGH); // Deselect SD card (HIGH = off)
                 delay(100);
                 
                 if (SD.exists(LOG_FILENAME)) {
@@ -2657,7 +2659,7 @@ void initStyles() {
     lv_style_set_bg_grad_color(&style_btn, lv_color_hex(0xFF00FF));
     lv_style_set_bg_grad_dir(&style_btn, LV_GRAD_DIR_HOR);
     lv_style_set_border_width(&style_btn, 0);
-    lv_style_set_text_color(&style_btn, lv_color_hex(0xFFFFFF));
+    lv_style_set_text_color(&style_btn, lv_color_hex(0xFFFFFF));  
     lv_style_set_text_font(&style_btn, &lv_font_montserrat_16);
     lv_style_set_pad_all(&style_btn, 10);
 
@@ -2676,12 +2678,12 @@ void initStyles() {
     
     // Initialize keyboard button style
     lv_style_init(&style_keyboard_btn);
-    lv_style_set_radius(&style_keyboard_btn, 8);  // Rounded corners
-    lv_style_set_border_width(&style_keyboard_btn, 2);  // Border width
-    lv_style_set_border_color(&style_keyboard_btn, lv_color_hex(0x888888));  // Border color
-    lv_style_set_pad_all(&style_keyboard_btn, 5);  // Inner padding inside the button
-    lv_style_set_bg_color(&style_keyboard_btn, lv_color_hex(0x333333));  // Button background color
-    lv_style_set_text_color(&style_keyboard_btn, lv_color_hex(0xFFFFFF));  // Text color
+    lv_style_set_radius(&style_keyboard_btn, 8);
+    lv_style_set_border_width(&style_keyboard_btn, 2);
+    lv_style_set_border_color(&style_keyboard_btn, lv_color_hex(0x888888));
+    lv_style_set_pad_all(&style_keyboard_btn, 5);
+    lv_style_set_bg_color(&style_keyboard_btn, lv_color_hex(0x333333));
+    lv_style_set_text_color(&style_keyboard_btn, lv_color_hex(0xFFFFFF));
 }
 
 void cleanupWiFiResources() {
@@ -2875,9 +2877,10 @@ void listSavedEntries() {
     
     // Switch to SD card mode
     SPI.end();
-    SPI_SD.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, -1);
-    pinMode(SD_SPI_CS_PIN, OUTPUT);
-    digitalWrite(SD_SPI_CS_PIN, HIGH);
+    delay(100);
+    SPI_SD.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, -1); // -1 means no default CS
+    pinMode(SD_SPI_CS_PIN, OUTPUT); // Set CS pin (4) as OUTPUT
+    digitalWrite(SD_SPI_CS_PIN, HIGH); // Deselect SD card (HIGH = off)
     delay(100);
     
     if (!SD.exists(LOG_FILENAME)) {
