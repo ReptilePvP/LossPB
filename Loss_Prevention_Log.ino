@@ -34,6 +34,9 @@ static void disconnect_msgbox_event_handler(lv_event_t* e);
 static void disconnect_refresh_timer_callback(lv_timer_t* timer);
 static void error_msgbox_event_handler(lv_event_t* e);
 static void error_refresh_timer_callback(lv_timer_t* timer);
+static void btn_new_event_cb(lv_event_t *e);
+static void btn_wifi_event_cb(lv_event_t *e);
+static void btn_logs_event_cb(lv_event_t *e);
 
 // Function declarations
 void initStyles();
@@ -493,69 +496,96 @@ void addStatusBar(lv_obj_t* screen) {
 }
 
 void createMainMenu() {
+    DEBUG_PRINT("createMainMenu - Start");
+    
+    // Process any pending LVGL tasks first
+    lv_timer_handler();
+    
     // Clean up all existing screens to prevent memory leaks
     if (mainScreen && lv_obj_is_valid(mainScreen)) {
         DEBUG_PRINT("Cleaning existing main screen");
-        lv_obj_del_async(mainScreen); // Defer deletion
+        lv_obj_del(mainScreen); // Use synchronous deletion instead of async
         mainScreen = nullptr;
+        lv_timer_handler(); // Process the deletion
     }
     
     if (wifi_screen && lv_obj_is_valid(wifi_screen)) {
         DEBUG_PRINT("Cleaning existing wifi screen");
         cleanupWiFiResources();
-        lv_obj_del_async(wifi_screen);
+        lv_obj_del(wifi_screen);
         wifi_screen = nullptr;
+        lv_timer_handler(); // Process the deletion
     }
     
     if (wifi_manager_screen && lv_obj_is_valid(wifi_manager_screen)) {
         DEBUG_PRINT("Cleaning existing wifi manager screen");
-        lv_obj_del_async(wifi_manager_screen);
+        lv_obj_del(wifi_manager_screen);
         wifi_manager_screen = nullptr;
+        lv_timer_handler(); // Process the deletion
     }
     
     if (wifi_keyboard && lv_obj_is_valid(wifi_keyboard)) {
         DEBUG_PRINT("Cleaning existing wifi keyboard");
-        lv_obj_del_async(wifi_keyboard);
+        lv_obj_del(wifi_keyboard);
         wifi_keyboard = nullptr;
+        lv_timer_handler(); // Process the deletion
     }
     
     if (genderMenu && lv_obj_is_valid(genderMenu)) {
         DEBUG_PRINT("Cleaning existing gender menu");
-        lv_obj_del_async(genderMenu);
+        lv_obj_del(genderMenu);
         genderMenu = nullptr;
+        lv_timer_handler(); // Process the deletion
     }
     
     if (colorMenu && lv_obj_is_valid(colorMenu)) {
         DEBUG_PRINT("Cleaning existing color menu");
-        lv_obj_del_async(colorMenu);
+        lv_obj_del(colorMenu);
         colorMenu = nullptr;
+        lv_timer_handler(); // Process the deletion
     }
     
     if (itemMenu && lv_obj_is_valid(itemMenu)) {
         DEBUG_PRINT("Cleaning existing item menu");
-        lv_obj_del_async(itemMenu);
+        lv_obj_del(itemMenu);
         itemMenu = nullptr;
+        lv_timer_handler(); // Process the deletion
     }
     
     if (confirmScreen && lv_obj_is_valid(confirmScreen)) {
         DEBUG_PRINT("Cleaning existing confirm screen");
-        lv_obj_del_async(confirmScreen);
+        lv_obj_del(confirmScreen);
         confirmScreen = nullptr;
+        lv_timer_handler(); // Process the deletion
     }
     
+    DEBUG_PRINT("All screens cleaned up, creating new main screen");
+    
     // Create new main screen
+    DEBUG_PRINTF("Free heap before creating main screen: %u bytes\n", ESP.getFreeHeap());
     mainScreen = lv_obj_create(NULL);
     if (!mainScreen) {
         DEBUG_PRINT("Failed to create main screen!");
         return;
     }
     
+    DEBUG_PRINT("Adding style to main screen");
     lv_obj_add_style(mainScreen, &style_screen, 0);
+    
+    DEBUG_PRINT("Loading main screen");
     lv_scr_load(mainScreen);
+    
+    DEBUG_PRINT("Adding status bar");
     addStatusBar(mainScreen);
     DEBUG_PRINTF("Main screen created: %p\n", mainScreen);
+    
+    DEBUG_PRINT("Adding WiFi indicator");
     addWifiIndicator(mainScreen);
+    
+    DEBUG_PRINT("Adding battery indicator");
     addBatteryIndicator(mainScreen);
+    
+    DEBUG_PRINT("Processing UI updates");
     lv_timer_handler(); // Process any pending UI updates
     
     lv_obj_t *header = lv_obj_create(mainScreen);
@@ -574,7 +604,7 @@ void createMainMenu() {
     lv_obj_t *label_new = lv_label_create(btn_new);
     lv_label_set_text(label_new, "New Entry");
     lv_obj_center(label_new);
-    lv_obj_add_event_cb(btn_new, [](lv_event_t *e) { createGenderMenu(); }, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_new, btn_new_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *btn_wifi = lv_btn_create(mainScreen);
     lv_obj_set_size(btn_wifi, 280, 60);
@@ -584,7 +614,7 @@ void createMainMenu() {
     lv_obj_t *label_wifi = lv_label_create(btn_wifi);
     lv_label_set_text(label_wifi, "Wi-Fi Settings");
     lv_obj_center(label_wifi);
-    lv_obj_add_event_cb(btn_wifi, [](lv_event_t *e) { createWiFiManagerScreen(); }, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_wifi, btn_wifi_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *btn_logs = lv_btn_create(mainScreen);
     lv_obj_set_size(btn_logs, 280, 60);
@@ -594,7 +624,22 @@ void createMainMenu() {
     lv_obj_t *label_logs = lv_label_create(btn_logs);
     lv_label_set_text(label_logs, "View Logs");
     lv_obj_center(label_logs);
-    lv_obj_add_event_cb(btn_logs, [](lv_event_t *e) { createViewLogsScreen(); }, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_logs, btn_logs_event_cb, LV_EVENT_CLICKED, NULL);
+}
+
+static void btn_new_event_cb(lv_event_t *e) {
+    DEBUG_PRINT("New Entry button clicked");
+    createGenderMenu();
+}
+
+static void btn_wifi_event_cb(lv_event_t *e) {
+    DEBUG_PRINT("WiFi Settings button clicked");
+    createWiFiManagerScreen();
+}
+
+static void btn_logs_event_cb(lv_event_t *e) {
+    DEBUG_PRINT("View Logs button clicked");
+    createViewLogsScreen();
 }
 
 void updateStatus(const char* message, uint32_t color = 0xFFFFFF) {
@@ -2479,7 +2524,7 @@ void disconnectFromWiFi() {
 }
 
 static void disconnect_msgbox_event_handler(lv_event_t* e) {
-    DEBUG_PRINT("Message box closed, scheduling WiFi manager screen refresh");
+    DEBUG_PRINT("Message box closed, scheduling main menu refresh");
     
     lv_obj_t* msgbox = lv_event_get_current_target(e);
     DEBUG_PRINT("Deleting message box");
@@ -2488,6 +2533,7 @@ static void disconnect_msgbox_event_handler(lv_event_t* e) {
     DEBUG_PRINT("Starting cleanup");
     cleanupWiFiResources();
     
+    // First, ensure we clean up any existing screen
     if (wifi_manager_screen && lv_obj_is_valid(wifi_manager_screen)) {
         DEBUG_PRINT("Clearing event callbacks from wifi_manager_screen children");
         uint32_t child_count = lv_obj_get_child_cnt(wifi_manager_screen);
@@ -2505,47 +2551,112 @@ static void disconnect_msgbox_event_handler(lv_event_t* e) {
         DEBUG_PRINT("wifi_manager_screen already invalid or null");
     }
     
-    DEBUG_PRINT("Processing LVGL tasks before refresh");
+    DEBUG_PRINT("Processing LVGL tasks before scheduling main menu");
     lv_timer_handler(); // Process pending tasks
     delay(100); // Increase delay to ensure stability
     lv_timer_handler(); // Double-check LVGL state
     
-    DEBUG_PRINTF("Free heap before creating screen: %u bytes\n", ESP.getFreeHeap());
-    DEBUG_PRINT("Creating WiFi manager screen directly");
-    createWiFiManagerScreen();
+    DEBUG_PRINTF("Free heap before scheduling main menu: %u bytes\n", ESP.getFreeHeap());
+    DEBUG_PRINT("Scheduling main menu creation via timer");
+    lv_timer_create(disconnect_refresh_timer_callback, 200, NULL);
 }
 
 static void disconnect_refresh_timer_callback(lv_timer_t* timer) {
-    DEBUG_PRINT("Refreshing WiFi manager screen after disconnect - Start");
-    lv_timer_del(timer);
-    DEBUG_PRINT("Timer deleted, calling createWiFiManagerScreen");
-    createWiFiManagerScreen();
-    DEBUG_PRINT("Refreshing WiFi manager screen after disconnect - End");
+    DEBUG_PRINT("Refreshing main menu after disconnect - Start");
+    
+    // Delete the timer first to prevent memory leaks
+    if (timer) {
+        DEBUG_PRINT("Deleting timer");
+        lv_timer_del(timer);
+    } else {
+        DEBUG_PRINT("Timer was null, no deletion needed");
+    }
+    
+    // Process any pending LVGL tasks
+    DEBUG_PRINT("Processing LVGL tasks before creating main menu");
+    lv_timer_handler();
+    delay(50);
+    
+    // Check heap status
+    DEBUG_PRINTF("Free heap before creating main menu: %u bytes\n", ESP.getFreeHeap());
+    
+    // Create the main menu
+    DEBUG_PRINT("Calling createMainMenu");
+    createMainMenu();
+    
+    // Process any pending tasks after creating the main menu
+    DEBUG_PRINT("Processing LVGL tasks after creating main menu");
+    lv_timer_handler();
+    
+    DEBUG_PRINT("Refreshing main menu after disconnect - End");
 }
 
 static void error_msgbox_event_handler(lv_event_t* e) {
-    DEBUG_PRINT("Error message box closed, scheduling WiFi manager screen refresh");
+    DEBUG_PRINT("Error message box closed, scheduling main menu refresh");
     
     lv_obj_t* msgbox = lv_event_get_current_target(e);
+    DEBUG_PRINT("Deleting message box");
     lv_obj_del(msgbox);
+    
+    DEBUG_PRINT("Starting cleanup");
+    cleanupWiFiResources();
     
     // First, ensure we clean up any existing screen
     if (wifi_manager_screen && lv_obj_is_valid(wifi_manager_screen)) {
+        DEBUG_PRINT("Clearing event callbacks from wifi_manager_screen children");
+        uint32_t child_count = lv_obj_get_child_cnt(wifi_manager_screen);
+        for (uint32_t i = 0; i < child_count; i++) {
+            lv_obj_t* child = lv_obj_get_child(wifi_manager_screen, i);
+            if (child && lv_obj_is_valid(child)) {
+                lv_obj_remove_event_cb(child, NULL);
+            }
+        }
+        
+        DEBUG_PRINT("Deleting wifi_manager_screen");
         lv_obj_del(wifi_manager_screen);
         wifi_manager_screen = nullptr;
+    } else {
+        DEBUG_PRINT("wifi_manager_screen already invalid or null");
     }
     
-    // Clean up any other WiFi-related resources
-    cleanupWiFiResources();
+    DEBUG_PRINT("Processing LVGL tasks before scheduling main menu");
+    lv_timer_handler(); // Process pending tasks
+    delay(100); // Increase delay to ensure stability
+    lv_timer_handler(); // Double-check LVGL state
     
-    // Schedule a refresh of the WiFi manager screen with increased delay
-    lv_timer_create(error_refresh_timer_callback, 100, NULL);
+    DEBUG_PRINTF("Free heap before scheduling main menu: %u bytes\n", ESP.getFreeHeap());
+    DEBUG_PRINT("Scheduling main menu creation via timer");
+    lv_timer_create(error_refresh_timer_callback, 200, NULL);
 }
 
 static void error_refresh_timer_callback(lv_timer_t* timer) {
-    DEBUG_PRINT("Refreshing WiFi manager screen after error");
-    lv_timer_del(timer);
-    createWiFiManagerScreen();
+    DEBUG_PRINT("Refreshing main menu after error - Start");
+    
+    // Delete the timer first to prevent memory leaks
+    if (timer) {
+        DEBUG_PRINT("Deleting timer");
+        lv_timer_del(timer);
+    } else {
+        DEBUG_PRINT("Timer was null, no deletion needed");
+    }
+    
+    // Process any pending LVGL tasks
+    DEBUG_PRINT("Processing LVGL tasks before creating main menu");
+    lv_timer_handler();
+    delay(50);
+    
+    // Check heap status
+    DEBUG_PRINTF("Free heap before creating main menu: %u bytes\n", ESP.getFreeHeap());
+    
+    // Create the main menu
+    DEBUG_PRINT("Calling createMainMenu");
+    createMainMenu();
+    
+    // Process any pending tasks after creating the main menu
+    DEBUG_PRINT("Processing LVGL tasks after creating main menu");
+    lv_timer_handler();
+    
+    DEBUG_PRINT("Refreshing main menu after error - End");
 }
 
 String getFormattedEntry(const String& entry) {
